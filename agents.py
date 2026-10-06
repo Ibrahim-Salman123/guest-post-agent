@@ -12,7 +12,7 @@ def get_llm() -> LLM:
         model=os.getenv("GROQ_MODEL", "groq/qwen/qwen3.8-27b"),
         api_key=os.getenv("GROQ_API_KEY"),
         temperature=0.7,
-        max_tokens=4000,       # ← 6000 se 4000 (rate limit safe)
+        max_tokens=1000,       # ← 6000 se 4000 (rate limit safe)
         max_retries=2,
     )
 
