@@ -2,12 +2,96 @@
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Guest Posting Agent</title><link rel="stylesheet" href="style.css"></head>
 <body>
-<aside class="side"><h1>Guest<span>Post</span> Agent</h1><nav>
-<button data-view="dashboard" class="on">Dashboard overview</button>
-<button data-view="websites">Add websites</button>
-<button data-view="campaign">Create campaign</button>
-<button data-view="review">Draft review queue <b id="qCount">0</b></button>
-<button data-view="analytics">Campaign analytics</button></nav></aside>
+
+<!-- ============ LOGIN SCREEN ============ -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-cube"></div>
+  <div class="login-cube"></div>
+  <div class="login-cube"></div>
+  <div class="login-cube"></div>
+  <div class="login-cube"></div>
+  <div class="login-cube"></div>
+
+  <div class="login-card">
+    <div class="login-logo"><span>G</span></div>
+    <h2>Welcome Back</h2>
+    <p class="sub">Sign in to your GuestPost Agent workspace</p>
+
+    <form class="login-form" id="loginForm">
+      <div class="login-field">
+        <label>Full Name</label>
+        <input type="text" name="name" placeholder="John Doe" required>
+        <span class="icon">👤</span>
+      </div>
+
+      <div class="login-field">
+        <label>Email Address</label>
+        <input type="email" name="email" placeholder="you@company.com" required>
+        <span class="icon">✉</span>
+      </div>
+
+      <div class="login-field">
+        <label>Password</label>
+        <input type="password" name="password" placeholder="••••••••" required>
+        <span class="icon">🔒</span>
+      </div>
+
+      <div class="login-row">
+        <label><input type="checkbox"> Remember me</label>
+        <a href="#">Forgot password?</a>
+      </div>
+
+      <button type="submit" class="btn-signin">
+        <span>Sign In →</span>
+      </button>
+
+      <div class="login-divider">OR</div>
+
+      <button type="button" class="btn-google" id="googleSignIn">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+        </svg>
+        <span>Continue with Google</span>
+      </button>
+    </form>
+
+    <p class="login-foot">Don't have an account? <a href="#">Create one</a></p>
+  </div>
+
+  <p class="login-copyright">© 2026 GuestPost Agent · AI-Powered Content Engine</p>
+</div>
+
+<!-- ============ HEADER ============ -->
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-logo"><span>G</span></div>
+    <div class="brand-text">
+      <h2>GuestPost Agent</h2>
+      <p>AI-Powered Content Engine</p>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="topbar-chip">System Online</div>
+  </div>
+</header>
+
+<!-- ============ SIDEBAR ============ -->
+<aside class="side">
+  <button class="side-toggle" id="sideToggle" aria-label="Toggle sidebar">‹</button>
+  <h1>Menu</h1>
+  <nav>
+    <button data-view="dashboard" data-icon="▦" class="on">Dashboard overview</button>
+    <button data-view="websites" data-icon="＋">Add websites</button>
+    <button data-view="campaign" data-icon="◈">Create campaign</button>
+    <button data-view="review" data-icon="☰">Draft review queue <b id="qCount">0</b></button>
+    <button data-view="analytics" data-icon="∿">Campaign analytics</button>
+  </nav>
+</aside>
+
+<!-- ============ MAIN ============ -->
 <main>
 <section id="v-dashboard" class="view">
  <div class="cards">
@@ -52,10 +136,15 @@
 <section id="v-review" class="view" hidden><div class="panel"><h3>Drafts waiting for your approval</h3>
  <div class="scroll"><table><thead><tr><th>Website</th><th>Keyword</th><th>Title</th><th>SEO</th><th>Words</th><th></th></tr></thead><tbody id="qBody"></tbody></table></div></div></section>
 <section id="v-analytics" class="view" hidden>
- <div class="panel"><h3>Campaigns</h3><div class="scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Progress</th><th>Published / total</th></tr></thead><tbody id="anCamp"></tbody></table></div></div>
+<div class="panel"><h3>Campaigns</h3><div class="scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Progress</th><th>Published / total</th><th></th></tr></thead><tbody id="anCamp"></tbody></table></div></div>
  <div class="panel"><h3>Website capacity</h3><div id="anSites"></div></div>
 </section>
 </main>
+
+<!-- ============ FOOTER ============ -->
+
+
+<!-- ============ MODAL ============ -->
 <div id="modal" class="modal" hidden><div class="dlg">
  <button class="x" id="mClose" aria-label="Close">&times;</button><h3 id="mTitle"></h3><p id="mMeta" class="hint"></p>
  <div id="mWarn" class="warn" hidden></div>
@@ -66,5 +155,6 @@
  <button id="mReject" class="btn ghost">Reject &amp; regenerate</button>
  <button id="mDelete" class="btn ghost" style="color:var(--bad);border-color:var(--bad)">Delete article</button>
  <p class="hint">Publish the draft on the website yourself first, then paste the live URL here.</p></div></div></div>
+
 <div id="toasts"></div>
 <script src="app.js"></script></body></html>
