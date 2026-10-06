@@ -16,7 +16,8 @@ def get_client():
 
 def get_model_name():
     """Returns model name without 'groq/' prefix."""
-    return os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b").replace("groq/", "")
+    # Use fast non-reasoning model to avoid token waste on reasoning
+    return os.getenv("GROQ_MODEL", "llama-3.1-8b-instant").replace("groq/", "")
 
 
 # These are kept for backward compatibility with tasks.py imports.
