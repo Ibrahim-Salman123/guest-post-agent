@@ -1,8 +1,7 @@
 """CrewAI tasks, Yoast-style evaluator, optimization loop and the article pipeline."""
 import json, os, re, time, threading, ipaddress
 from urllib.parse import urlparse
-from crewai import Crew, Process, Task
-from agents import seo_agent, writer_agent
+from agents import get_client, get_model_name, writer_agent, seo_agent
 from automation import create_draft, validate_external_links
 from database import (Article, Campaign, SessionLocal, Website, normalize_url)
 
@@ -45,9 +44,17 @@ def _get_lock(aid: int) -> threading.Lock:
 
 
 def _run(agent, desc, expected) -> str:
-    t = Task(description=desc, expected_output=expected, agent=agent)
-    return Crew(agents=[agent], tasks=[t], process=Process.sequential,
-                verbose=False).kickoff().raw
+    client = get_client()
+    resp = client.chat.completions.create(
+        model=get_model_name(),
+        messages=[
+            {"role": "system", "content": expected},
+            {"role": "user", "content": desc},
+        ],
+        temperature=0.7,
+        max_tokens=900,
+    )
+    return resp.choices[0].message.content
 
 
 def _json(text: str) -> dict:
