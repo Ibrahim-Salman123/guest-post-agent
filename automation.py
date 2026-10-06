@@ -120,3 +120,26 @@ def validate_external_links(html: str, limit: int = 5) -> list:
         if not _check_url(u):
             broken.append(u)
     return broken
+
+
+
+def publish_wp_draft(site: Website, article) -> dict:
+    """Change WP post status from 'draft' to 'publish'."""
+    if not article.draft_url:
+        raise RuntimeError("No draft URL - publish not possible")
+    m = re.search(r"[?&]post=(\d+)", article.draft_url)
+    if not m:
+        raise RuntimeError("Cannot find post ID in draft URL")
+    pid = m.group(1)
+    base = site.url.rstrip("/")
+    r = requests.post(
+        f"{base}/wp-json/wp/v2/posts/{pid}",
+        json={"status": "publish"},
+        auth=(site.username, decrypt(site.password_hash)),
+        timeout=60,
+    )
+    if r.status_code not in (200, 201):
+        raise RuntimeError(f"WP publish {r.status_code}: {r.text[:200]}")
+    published = r.json()
+    live_url = published.get("link") or f"{base}/?p={pid}"
+    return {"live_url": live_url, "post_id": pid}
