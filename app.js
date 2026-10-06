@@ -249,9 +249,7 @@ async function openModal(id) {
   const canReject  = ['Draft Created', 'Waiting for Approval', 'Failed', 'Rejected'].includes(status);
   const canDelete  = status !== 'Published';
 
-  const liveLabel = $('#mLive').closest('label');
-  if (liveLabel) liveLabel.hidden = !canApprove;
-  $('#mApprove').hidden = !canApprove;
+
   $('#mReject').hidden  = !canReject;
   $('#mDelete').hidden  = !canDelete;
   $('#mAct').hidden = status === 'Published';
@@ -262,11 +260,7 @@ async function openModal(id) {
 }
 
 $('#mClose').onclick = () => $('#modal').hidden = true;
-$('#mApprove').onclick = guard(async () => {
-  if (!$('#mLive').value) throw new Error('Paste the final live URL first');
-  await api(`/articles/${cur.id}/approve`, {method: 'POST', body: {live_url: $('#mLive').value.trim()}});
-  $('#modal').hidden = true; toast('Published and recorded', 'ok'); refresh();
-});
+
 $('#mReject').onclick = guard(async () => {
   if (!confirm('Reject this draft and regenerate a fresh version?')) return;
   await api(`/articles/${cur.id}/reject?regenerate=true`, {method: 'POST'});
