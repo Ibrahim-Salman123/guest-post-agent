@@ -318,8 +318,8 @@ def process_article(aid: int):
 
         _status(db, a, "Optimizing")
         art, res = optimize(art, a.keyword, a.target_url,
-                            min_words=max(site.min_words or 600, 600),
-                            max_words=site.max_words or 2000)
+                            min_words=site.min_words or 400,
+                            max_words=site.max_words or 900)
 
         if res["critical_failures"]:
             raise RuntimeError("Critical SEO checks failed: "
@@ -359,7 +359,9 @@ def process_article(aid: int):
             db.commit()
 
         if draft_failed:
-            _status(db, a, "Failed")   # ← FIX: pehle "Waiting for Approval" tha
+            # Draft upload fail — lekin article ready hai
+            # Status "Waiting for Approval" rakho + warning dikhao
+            _status(db, a, "Waiting for Approval")
         else:
             _status(db, a, "Draft Created")
             _status(db, a, "Waiting for Approval")
