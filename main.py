@@ -275,12 +275,33 @@ def list_websites(db=Depends(get_db)):
 
 
 @app.delete("/api/websites/{wid}")
-def delete_website(wid: int, db=Depends(get_db)):
-    if db.query(Article).filter(Article.website_id == wid).first():
-        raise HTTPException(409, "Website has articles and cannot be deleted")
+def delete_website(wid: int, force: bool = False, db=Depends(get_db)):
+    """
+    Delete website. If it has articles:
+    - force=False → 409 error (safety, asks for confirmation)
+    - force=True  → cascade delete articles + keyword pairs too
+    """
+    s = db.get(Website, wid)
+    if not s:
+        raise HTTPException(404, "Website not found")
+
+    article_count = db.query(Article).filter(Article.website_id == wid).count()
+
+    if article_count > 0 and not force:
+        raise HTTPException(
+            409,
+            f"Website has {article_count} article(s). Delete anyway? "
+            f"Pass force=true to confirm."
+        )
+
+    # Cascade delete: articles + keyword pairs + website
+    if force:
+        db.query(Article).filter(Article.website_id == wid).delete(synchronize_session=False)
+        db.query(KeywordURLPair).filter(KeywordURLPair.assigned_website_id == wid).delete(synchronize_session=False)
+
     db.query(Website).filter(Website.id == wid).delete()
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "deleted_articles": article_count}
 
 
 @app.post("/api/campaigns")
