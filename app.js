@@ -18,7 +18,6 @@ const guard = fn => async (...a) => { try { await fn(...a); } catch (e) { toast(
 const badge = s => `<span class="badge b-${esc(s.split(' ')[0])}">${esc(s === 'Waiting for Approval' ? 'Waiting Approval' : s)}</span>`;
 const link = (u, t) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${t}</a>` : '-';
 
-// ✅ FIX #2 + #3: show Retry for Failed AND Rejected; show View for all reviewable states
 function actionCell(a) {
   const retryable = ['Failed', 'Rejected'].includes(a.status);
   const viewable  = ['Draft Created', 'Waiting for Approval', 'Published', 'Failed', 'Rejected'].includes(a.status);
@@ -28,7 +27,6 @@ function actionCell(a) {
   return `<td>${btns.join(' ')}</td>`;
 }
 
-// Show warnings/errors clearly in status cell
 function statusCell(a) {
   const errHtml = a.error
     ? `<br><small class="err-msg" title="${esc(a.error)}">⚠ ${esc(a.error.slice(0, 80))}</small>`
@@ -39,10 +37,18 @@ function statusCell(a) {
   return `<td>${badge(a.status)}${errHtml}${warnHtml}</td>`;
 }
 
+// Sidebar navigation
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('.view').forEach(v => v.hidden = v.id !== 'v-' + b.dataset.view);
 });
+
+// Sidebar toggle
+const toggleSidebar = () => {
+  document.querySelector('.side').classList.toggle('collapsed');
+  document.body.classList.toggle('sidebar-collapsed');
+};
+document.getElementById('sideToggle').onclick = toggleSidebar;
 
 async function refresh() {
   const [d, sites, camps] = await Promise.all([api('/dashboard'), api('/websites'), api('/campaigns')]);
@@ -76,7 +82,9 @@ function renderAll() {
   $('#qBody').innerHTML = q.map(a => `<tr><td>${esc(a.website)}</td><td>${esc(a.keyword)}</td><td>${esc(a.title || '-')}</td><td>${a.seo_score ?? '-'}</td><td>${a.words ?? '-'}</td><td><button class="btn sm ghost" data-open="${a.id}">Review</button></td></tr>`).join('') || '<tr><td colspan="6">No drafts waiting. Run a campaign to generate some.</td></tr>';
 
   $('#anCamp').innerHTML = S.camps.map(c => { const p = c.total ? Math.round(c.published / c.total * 100) : 0;
-    return `<tr><td>${esc(c.name)}</td><td>${badge(c.status)}</td><td><div class="prog"><i style="width:${p}%"></i></div></td><td>${c.published} / ${c.total}</td></tr>`; }).join('') || '<tr><td colspan="4">No campaigns yet.</td></tr>';
+    const canDelete = c.published === 0;
+    return `<tr><td>${esc(c.name)}</td><td>${badge(c.status)}</td><td><div class="prog"><i style="width:${p}%"></i></div></td><td>${c.published} / ${c.total}</td>
+    <td>${canDelete ? `<button class="btn sm ghost" data-delcamp="${c.id}">Delete</button>` : '<small style="color:#94A3B8">Published</small>'}</td></tr>`; }).join('') || '<tr><td colspan="5">No campaigns yet.</td></tr>';
 
   $('#anSites').innerHTML = S.sites.map(s => { const used = s.article_limit - s.remaining;
     return `<div class="cap"><div><b>${esc(s.name)}</b><span>${used} assigned of ${s.article_limit} (${s.published_count} published)</span></div><div class="prog"><i style="width:${Math.round(used / s.article_limit * 100)}%"></i></div></div>`; }).join('') || '<p class="hint">No websites yet.</p>';
@@ -98,10 +106,47 @@ document.body.addEventListener('click', guard(async e => {
   const t = e.target;
   if (t.dataset.retry) { await api(`/articles/${t.dataset.retry}/retry`, {method: 'POST'}); toast('Retry started', 'ok'); refresh(); }
   if (t.dataset.open) openModal(t.dataset.open);
-  if (t.dataset.edit) { const s = S.sites.find(x => x.id == t.dataset.edit), f = $('#siteForm');
+
+  // Edit website
+  if (t.dataset.edit) {
+    const s = S.sites.find(x => x.id == t.dataset.edit), f = $('#siteForm');
     Object.keys(s).forEach(k => { if (f.elements[k] && k !== 'password') f.elements[k].value = s[k] ?? ''; });
-    f.elements.password.value = ''; $('#wfTitle').textContent = 'Edit ' + s.name; document.querySelector('[data-view=websites]').click(); scrollTo(0, 0); }
-  if (t.dataset.del && confirm('Delete this website?')) { await api('/websites/' + t.dataset.del, {method: 'DELETE'}); toast('Website deleted', 'ok'); refresh(); }
+    f.elements.password.value = '';
+    $('#wfTitle').textContent = 'Edit ' + s.name;
+    document.querySelector('[data-view=websites]').click();
+    scrollTo(0, 0);
+  }
+
+  // Delete campaign
+  if (t.dataset.delcamp) {
+    if (confirm('Delete this campaign and all its articles?')) {
+      await api('/campaigns/' + t.dataset.delcamp, {method: 'DELETE'});
+      toast('Campaign deleted', 'ok');
+      refresh();
+    }
+  }
+
+  // Delete website
+  if (t.dataset.del) {
+    const wid = t.dataset.del;
+    const site = S.sites.find(s => String(s.id) === String(wid));
+    const siteName = site ? site.name : 'this website';
+    try {
+      await api('/websites/' + wid, {method: 'DELETE'});
+      toast('Website deleted', 'ok');
+      refresh();
+    } catch (err) {
+      if (err.message && err.message.toLowerCase().includes('article')) {
+        if (confirm(`"${siteName}" has articles linked to it.\n\nDeleting will also remove:\n• All articles under this website\n• All campaign references\n\nAre you sure you want to delete?`)) {
+          await api('/websites/' + wid + '?force=true', {method: 'DELETE'});
+          toast('Website and articles deleted', 'ok');
+          refresh();
+        }
+      } else {
+        throw err;
+      }
+    }
+  }
 }));
 
 const resetSite = () => { $('#siteForm').reset(); $('#siteForm').elements.id.value = ''; $('#wfTitle').textContent = 'Add a website'; };
@@ -163,7 +208,6 @@ async function openModal(id) {
   $('#mMeta').textContent = `${cur.website} | Keyword: ${cur.keyword} | Target: ${cur.target_url} | SEO ${cur.seo_score ?? '-'} | Meta: ${cur.meta_description || '-'}`;
   if (cur.image_alt) $('#mMeta').textContent += ` | Image alt: ${cur.image_alt}`;
 
-  // Show errors and warnings both
   const warnEl = $('#mWarn');
   const msgs = [];
   if (cur.error) msgs.push('❌ ' + cur.error);
@@ -182,20 +226,24 @@ async function openModal(id) {
   const preview = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
       body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
            padding:20px;line-height:1.7;color:#0F172A;max-width:800px;margin:0 auto}
-      h2{color:#1E3A8A;margin-top:28px;margin-bottom:12px;font-size:1.35em}
-      h3{color:#1E3A8A;margin-top:20px;margin-bottom:8px;font-size:1.1em}
+      h2{color:#0EA5E9;margin-top:28px;margin-bottom:12px;font-size:1.35em}
+      h3{color:#0EA5E9;margin-top:20px;margin-bottom:8px;font-size:1.1em}
       p{margin:12px 0}
-      a{color:#38BDF8}
+      a{color:#0EA5E9}
       strong{color:#0F172A}
       ul,ol{margin:12px 0;padding-left:24px}
       li{margin:6px 0}
     </style></head><body>${content}</body></html>`;
   setIframeContent(preview);
 
-  $('#mDraft').href = cur.draft_url || '#';
-  $('#mDraft').style.display = cur.draft_url ? '' : 'none';
+  if (cur.draft_url) {
+    $('#mDraft').href = cur.draft_url;
+    $('#mDraft').style.display = '';
+    $('#mDraft').textContent = 'Open draft in website';
+  } else {
+    $('#mDraft').style.display = 'none';
+  }
 
-  // ✅ FIX #2 + #3: Modal buttons conditionally shown based on status
   const status = cur.status;
   const canApprove = ['Draft Created', 'Waiting for Approval'].includes(status);
   const canReject  = ['Draft Created', 'Waiting for Approval', 'Failed', 'Rejected'].includes(status);
@@ -233,3 +281,11 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#modal').
 
 refresh().catch(e => toast(e.message, 'err'));
 setInterval(() => { if (document.hidden || !$('#modal').hidden) return; refresh().catch(() => {}); }, 3000);
+
+// Login screen — hide on submit / Google
+const hideLogin = () => document.getElementById('loginScreen').classList.add('hidden');
+document.getElementById('loginForm').addEventListener('submit', e => {
+  e.preventDefault();
+  hideLogin();
+});
+document.getElementById('googleSignIn').addEventListener('click', hideLogin);
