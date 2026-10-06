@@ -529,6 +529,12 @@ def dashboard(db=Depends(get_db)):
                 Article.status == "Published").count()}
 
 
-FRONTEND = os.path.join(os.path.dirname(__file__), "frontend")
-if os.path.isdir(FRONTEND):
-    app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="ui")
+# Serve frontend files from root
+from fastapi.responses import FileResponse
+FRONTEND = os.path.dirname(os.path.abspath(__file__))
+
+@app.get("/")
+def root():
+    return FileResponse(os.path.join(FRONTEND, "index.html"))
+
+app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="ui")
