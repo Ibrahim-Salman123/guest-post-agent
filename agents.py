@@ -1,37 +1,29 @@
-"""Two LLM agents (Writer + SEO) running on Groq.
-Draft deployment is deterministic (automation.py), not an agent."""
+"""Direct Groq LLM — no CrewAI. Reads GROQ_API_KEY from .env."""
 import os
-from crewai import Agent, LLM
+from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
-def get_llm() -> LLM:
-    return LLM(
-        model=os.getenv("GROQ_MODEL", "groq/qwen/qwen3.8-27b"),
-        api_key=os.getenv("GROQ_API_KEY"),
-        temperature=0.7,
-        max_tokens=1000,       # ← 6000 se 4000 (rate limit safe)
-        max_retries=2,
-    )
+def get_client():
+    """Returns a Groq client using GROQ_API_KEY from env."""
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("GROQ_API_KEY is missing in environment variables")
+    return Groq(api_key=api_key)
 
 
-def writer_agent() -> Agent:
-    return Agent(
-        role="Content Generation Specialist",
-        goal="Write 100% unique, human-like, well-structured guest articles that weave "
-             "in the target keyword and URL naturally, without keyword stuffing.",
-        backstory="Senior editor for niche publications; every piece is original, "
-                  "useful and fits the host site's niche and rules.",
-        llm=get_llm(), allow_delegation=False, verbose=False)
+def get_model_name():
+    """Returns model name without 'groq/' prefix."""
+    return os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b").replace("groq/", "")
 
 
-def seo_agent() -> Agent:
-    return Agent(
-        role="Yoast-style SEO Optimization Auditor",
-        goal="Revise articles until they pass Yoast-style criteria: focus keyword in "
-             "title, H2, first paragraph, meta description; readable short paragraphs "
-             "and sentences.",
-        backstory="Technical SEO who fixes exactly the failing checks and changes nothing else.",
-        llm=get_llm(), allow_delegation=False, verbose=False)
+# These are kept for backward compatibility with tasks.py imports.
+# They return None because we don't use CrewAI agents anymore.
+def writer_agent():
+    return None
+
+
+def seo_agent():
+    return None
