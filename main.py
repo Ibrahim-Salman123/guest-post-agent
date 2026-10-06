@@ -1,9 +1,7 @@
 """FastAPI backend. Run: uvicorn main:app --reload  ->  http://localhost:8000"""
 # ---- Groq cache_breakpoint fix (CrewAI bug #5886) ----
 
-import crewai.llms.cache as _crewai_cache
-_crewai_cache.mark_cache_breakpoint = lambda msg: msg
-# ------------------------------------------------------
+"""FastAPI backend. Run: uvicorn main:app --reload  ->  http://localhost:8000"""
 from automation import delete_wp_post
 import base64, json, os, secrets, threading
 from datetime import datetime
