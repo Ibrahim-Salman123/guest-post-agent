@@ -2,7 +2,8 @@
 import json, os, re, time, threading, ipaddress
 from urllib.parse import urlparse
 from agents import get_client, get_model_name, writer_agent, seo_agent
-from automation import create_draft, validate_external_links
+from automation import create_draft, validate_external_links, publish_wp_draft
+from datetime import datetime
 from database import (Article, Campaign, SessionLocal, Website, normalize_url)
 
 MAX_ROUNDS = int(os.getenv("MAX_SEO_ROUNDS", "4"))
@@ -370,7 +371,21 @@ def process_article(aid: int):
             # Status "Waiting for Approval" rakho + warning dikhao
             _status(db, a, "Waiting for Approval")
         else:
-            _status(db, a, "Draft Created")
+                    _status(db, a, "Draft Created")
+
+        # AUTO-PUBLISH immediately
+        try:
+            pub = publish_wp_draft(site, a)
+            a.live_url = pub["live_url"]
+            a.status = "Published"
+            a.published_at = datetime.now()
+            a.website.published_count += 1
+            if all(x.status == "Published" for x in a.campaign.articles):
+                a.campaign.status = "Completed"
+            db.commit()
+        except Exception as pub_err:
+            a.warnings = ((a.warnings + "\n") if a.warnings else "") + \
+                f"Auto-publish failed: {str(pub_err)[:150]}"
             _status(db, a, "Waiting for Approval")
     except Exception as e:
         db.rollback()
