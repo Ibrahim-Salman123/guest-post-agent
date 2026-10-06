@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Guest Posting Agent</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<aside class="side"><h1>Guest<span>Post</span> Agent</h1><nav>
+<button data-view="dashboard" class="on">Dashboard overview</button>
+<button data-view="websites">Add websites</button>
+<button data-view="campaign">Create campaign</button>
+<button data-view="review">Draft review queue <b id="qCount">0</b></button>
+<button data-view="analytics">Campaign analytics</button></nav></aside>
+<main>
+<section id="v-dashboard" class="view">
+ <div class="cards">
+  <div class="card"><p>Active campaigns</p><h2 id="m_active">0</h2></div>
+  <div class="card"><p>Total guest sites</p><h2 id="m_sites">0</h2></div>
+  <div class="card"><p>Drafts pending approval</p><h2 id="m_pending">0</h2></div>
+  <div class="card"><p>Published articles</p><h2 id="m_pub">0</h2></div></div>
+ <div class="panel"><div class="bar"><h3>Live campaign progress</h3>
+  <select id="campSel"></select><button id="runBtn" class="btn">Run campaign</button><button id="pauseBtn" class="btn ghost">Pause</button></div>
+  <div class="scroll"><table><thead><tr><th>#</th><th>Website</th><th>Keyword</th><th>Target URL</th><th>Status</th><th>SEO</th><th>Draft</th><th>Live</th><th>Date</th><th></th></tr></thead><tbody id="progBody"></tbody></table></div></div>
+</section>
+<section id="v-websites" class="view" hidden>
+ <div class="panel"><h3 id="wfTitle">Add a website</h3>
+ <form id="siteForm" class="grid"><input type="hidden" name="id">
+  <label>Website name<input name="name" required></label>
+  <label>Website URL<input name="url" type="url" placeholder="https://site.com" required></label>
+  <label>Username<input name="username" required></label>
+  <label>Application password<input name="password" type="password" placeholder="Leave blank to keep current"></label>
+  <label>Niche<input name="niche"></label>
+  <label>Article limit (total)<input name="article_limit" type="number" min="1" value="1" required></label>
+  <label>Daily limit (0 = no limit)<input name="daily_limit" type="number" min="0" value="0"></label>
+  <label>Min words<input name="min_words" type="number" min="200" value="900"></label>
+  <label>Max words<input name="max_words" type="number" min="200" value="1200"></label>
+  <label>Posting method<select name="cms_type"><option value="wordpress">WordPress (API, browser fallback)</option><option value="custom">Custom CMS (browser only)</option></select></label>
+  <label>Posting requirements<input name="requirements" placeholder="e.g. 1000 words, formal tone"></label>
+  <label class="full">Notes<input name="notes"></label>
+  <label class="full">Browser selectors (JSON, custom CMS only)<textarea name="selectors" rows="3" placeholder='{"login_url":"","user_sel":"","pass_sel":"","submit_sel":"","new_post_url":"","title_sel":"","body_sel":"","save_draft_sel":""}'></textarea></label>
+  <label class="full">Internal links (JSON list, optional)<textarea name="internal_links" rows="2" placeholder='[{"url":"https://site.com/blog","anchor":"our blog"},{"url":"https://site.com/about","anchor":"about us"}]'></textarea></label>
+  <div class="full"><button class="btn">Save website</button>
+   <button type="button" id="wfTest" class="btn ghost">Test connection</button>
+   <button type="button" id="wfReset" class="btn ghost">Clear</button></div></form></div>
+ <div class="panel"><h3>Your websites</h3><div class="scroll"><table><thead><tr><th>Name</th><th>URL</th><th>Niche</th><th>Limit</th><th>Daily</th><th>Published</th><th>Remaining</th><th></th></tr></thead><tbody id="siteBody"></tbody></table></div></div>
+</section>
+<section id="v-campaign" class="view" hidden>
+ <div class="panel"><h3>Create a campaign</h3>
+ <label>Campaign name<input id="cName" placeholder="Digital Marketing Guest Posting"></label>
+ <p class="hint">Websites for auto-assignment (none selected = all):</p><div id="sitePool" class="pool"></div>
+ <p class="hint">Keywords and target URLs. Pick a website per row, or leave on Auto.</p>
+ <div id="pairs"></div>
+ <button id="addPair" class="btn ghost">Add keyword row</button> <button id="saveCamp" class="btn">Create campaign</button></div>
+</section>
+<section id="v-review" class="view" hidden><div class="panel"><h3>Drafts waiting for your approval</h3>
+ <div class="scroll"><table><thead><tr><th>Website</th><th>Keyword</th><th>Title</th><th>SEO</th><th>Words</th><th></th></tr></thead><tbody id="qBody"></tbody></table></div></div></section>
+<section id="v-analytics" class="view" hidden>
+ <div class="panel"><h3>Campaigns</h3><div class="scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Progress</th><th>Published / total</th></tr></thead><tbody id="anCamp"></tbody></table></div></div>
+ <div class="panel"><h3>Website capacity</h3><div id="anSites"></div></div>
+</section>
+</main>
+<div id="modal" class="modal" hidden><div class="dlg">
+ <button class="x" id="mClose" aria-label="Close">&times;</button><h3 id="mTitle"></h3><p id="mMeta" class="hint"></p>
+ <div id="mWarn" class="warn" hidden></div>
+ <p><a id="mDraft" target="_blank" rel="noopener" class="btn ghost">Open draft in website</a></p>
+ <iframe id="mPrev" sandbox="" title="Article preview"></iframe>
+ <div id="mAct"><label>Final live URL<input id="mLive" type="url" placeholder="https://site.com/blog/post"></label>
+ <button id="mApprove" class="btn">Approve &amp; publish</button>
+ <button id="mReject" class="btn ghost">Reject &amp; regenerate</button>
+ <button id="mDelete" class="btn ghost" style="color:var(--bad);border-color:var(--bad)">Delete article</button>
+ <p class="hint">Publish the draft on the website yourself first, then paste the live URL here.</p></div></div></div>
+<div id="toasts"></div>
+<script src="app.js"></script></body></html>

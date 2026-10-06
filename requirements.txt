@@ -1,0 +1,9 @@
+crewai>=0.100.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+sqlalchemy>=2.0
+requests>=2.31
+playwright>=1.44
+python-dotenv>=1.0
+cryptography>=42.0
+pydantic>=2.6
