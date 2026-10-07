@@ -15,12 +15,13 @@ def get_client():
 
 
 def get_model_name():
-    """Returns model name without 'groq/' prefix."""
-    # Use fast non-reasoning model to avoid token waste on reasoning
-    return os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b").replace("groq/", "")
+    """Returns model name without 'groq/' prefix.
+    Uses llama-3.1-8b-instant: fast, non-reasoning, reliable JSON output.
+    """
+    return os.getenv("GROQ_MODEL", "llama-3.1-8b-instant").replace("groq/", "")
 
 
-# These are kept for backward compatibility with tasks.py imports.
+# Kept for backward compatibility with tasks.py imports.
 # They return None because we don't use CrewAI agents anymore.
 def writer_agent():
     return None
