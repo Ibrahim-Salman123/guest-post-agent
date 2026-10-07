@@ -450,21 +450,12 @@ def delete_article(aid: int, db=Depends(get_db)):
 
 
 @app.post("/api/articles/{aid}/approve")
-def approve(aid: int, body: ApproveIn, db=Depends(get_db)):
+def approve(aid: int, body: dict = {}, db=Depends(get_db)):
     a = db.get(Article, aid)
     if not a:
         raise HTTPException(404, "Article not found")
     if a.status not in ("Draft Created", "Waiting for Approval"):
-        raise HTTPException(409, f"Article is '{a.status}', not awaiting approval")
-    a.live_url, a.status = body.live_url, "Published"
-    # ✅ FIX #4: record publish time for accurate daily-limit tracking
-    a.published_at = datetime.utcnow()
-    a.website.published_count += 1
-    c = a.campaign
-    if all(x.status == "Published" for x in c.articles):
-        c.status = "Completed"
-    db.commit()
-    return art_dict(a)
+        raise HTTPException
 
 
 @app.post("/api/articles/{aid}/reject")
