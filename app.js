@@ -262,12 +262,29 @@ async function openModal(id) {
 
 $('#mClose').onclick = () => $('#modal').hidden = true;
 
-// ✅ Approve & Publish — auto-publish on real website, optional manual URL
 $('#mApprove').onclick = guard(async () => {
   const manualUrl = $('#mLive').value.trim();
   if (!confirm(manualUrl
       ? `Publish this article now? Live URL will be set to: ${manualUrl}`
-      : 'Publish this article on your real website now? (Live URL will be auto-detected)')) return;
+      : 'Publish this article on your real website now?')) return;
+
+  toast('Publishing... please wait', 'ok');
+  try {
+    const body = manualUrl ? {live_url: manualUrl} : {};
+    const r = await api(`/articles/${cur.id}/approve`, {method: 'POST', body});
+
+    // ✅ Close the review window
+    $('#modal').hidden = true;
+
+    // ✅ Show success toast
+    toast('Published successfully! Check your website.', 'ok');
+
+    // ✅ Refresh dashboard so status shows "Published"
+    refresh();
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+});
 
   toast('Publishing... please wait', 'ok');
   try {
