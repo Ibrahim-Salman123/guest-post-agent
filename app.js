@@ -107,7 +107,6 @@ document.body.addEventListener('click', guard(async e => {
   if (t.dataset.retry) { await api(`/articles/${t.dataset.retry}/retry`, {method: 'POST'}); toast('Retry started', 'ok'); refresh(); }
   if (t.dataset.open) openModal(t.dataset.open);
 
-  // Edit website
   if (t.dataset.edit) {
     const s = S.sites.find(x => x.id == t.dataset.edit), f = $('#siteForm');
     Object.keys(s).forEach(k => { if (f.elements[k] && k !== 'password') f.elements[k].value = s[k] ?? ''; });
@@ -117,7 +116,6 @@ document.body.addEventListener('click', guard(async e => {
     scrollTo(0, 0);
   }
 
-  // Delete campaign
   if (t.dataset.delcamp) {
     if (confirm('Delete this campaign and all its articles?')) {
       await api('/campaigns/' + t.dataset.delcamp, {method: 'DELETE'});
@@ -126,7 +124,6 @@ document.body.addEventListener('click', guard(async e => {
     }
   }
 
-  // Delete website
   if (t.dataset.del) {
     const wid = t.dataset.del;
     const site = S.sites.find(s => String(s.id) === String(wid));
@@ -236,7 +233,6 @@ async function openModal(id) {
     </style></head><body>${content}</body></html>`;
   setIframeContent(preview);
 
-  // Draft link — show if available
   if (cur.draft_url) {
     $('#mDraft').href = cur.draft_url;
     $('#mDraft').style.display = '';
@@ -245,7 +241,6 @@ async function openModal(id) {
     $('#mDraft').style.display = 'none';
   }
 
-  // Action buttons visibility
   const status = cur.status;
   const canReject  = ['Draft Created', 'Waiting for Approval', 'Failed', 'Rejected'].includes(status);
   const canDelete  = status !== 'Published';
@@ -275,7 +270,7 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#modal').
 refresh().catch(e => toast(e.message, 'err'));
 setInterval(() => { if (document.hidden || !$('#modal').hidden) return; refresh().catch(() => {}); }, 3000);
 
-// Login screen — hide on submit / Google
+// Login screen
 const hideLogin = () => document.getElementById('loginScreen').classList.add('hidden');
 document.getElementById('loginForm').addEventListener('submit', e => {
   e.preventDefault();
