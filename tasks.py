@@ -17,7 +17,7 @@ TRANSITION_WORDS = {
     "as a result", "in conclusion", "finally", "firstly", "secondly",
 }
 
-ALLOWED_TAGS = {"p", "h2", "h3", "ul", "ol", "li", "a", "strong", "em", "br"}
+ALLOWED_TAGS = {"p", "h2", "h3", "ul", "ol", "li", "a", "strong", "em", "br", "img"}
 
 
 def sanitize_html(html: str) -> str:
@@ -164,14 +164,13 @@ def yoast_evaluate(title, meta, html, keyword, target_url,
         for l in links
     )
 
-    # ✅ Word count is now NON-CRITICAL (was True, now False)
     checks = [
         ("Keyword in SEO title", kw in title.lower(), True),
         ("Keyword in meta description", kw in meta.lower(), True),
         ("Keyword in first paragraph", bool(paras) and kw in paras[0].lower(), True),
         ("Keyword in at least one H2", any(kw in h.lower() for h in h2s), True),
         ("Links to target URL", has_target, True),
-        (f"Word count {min_ok}-{max_ok}", min_ok <= words <= max_ok, False),   # ← CHANGED
+        (f"Word count {min_ok}-{max_ok}", min_ok <= words <= max_ok, False),
         ("No H1 inside body", "<h1" not in html.lower(), True),
         ("SEO title 30-60 chars", 30 <= len(title) <= 60, False),
         ("Meta description 120-156 chars", 120 <= len(meta) <= 156, False),
@@ -332,7 +331,6 @@ def process_article(aid: int):
                             min_words=site.min_words or 400,
                             max_words=site.max_words or 900)
 
-        # ✅ Only block on truly critical failures (keyword in title, meta, etc.)
         if res["critical_failures"]:
             raise RuntimeError("Critical SEO checks failed: "
                                + "; ".join(res["critical_failures"]))
@@ -357,7 +355,7 @@ def process_article(aid: int):
         a.warnings = "\n".join(warnings) if warnings else None
         db.commit()
 
-        # Draft creation
+        # Draft creation (with image)
         draft_failed = False
         try:
             d = create_draft(site, a.title, a.content, a.meta_description,
