@@ -1,7 +1,4 @@
 """FastAPI backend. Run: uvicorn main:app --reload  ->  http://localhost:8000"""
-# ---- Groq cache_breakpoint fix (CrewAI bug #5886) ----
-
-"""FastAPI backend. Run: uvicorn main:app --reload  ->  http://localhost:8000"""
 from automation import delete_wp_post
 import base64, json, os, secrets, threading
 from datetime import datetime
@@ -81,6 +78,13 @@ def _url(v: str) -> str:
     return v
 
 
+def _url_optional(v: str) -> str:
+    v = (v or "").strip()
+    if v and not v.startswith(("http://", "https://")):
+        raise ValueError("URL must start with http:// or https://")
+    return v
+
+
 class WebsiteIn(BaseModel):
     id: Optional[int] = None
     name: str = Field(min_length=1, max_length=120)
@@ -139,19 +143,27 @@ class WebsiteIn(BaseModel):
 
 class PairIn(BaseModel):
     keyword: str = Field(min_length=1, max_length=200)
-    target_url: str
+    target_url: Optional[str] = ""
     website_id: Optional[int] = None
+    language: Optional[str] = ""
+    image_category: Optional[str] = ""
 
     @field_validator("target_url")
     @classmethod
-    def _v_url(cls, v: str) -> str:
-        return _url(v)
+    def _v_url(cls, v: Optional[str]) -> str:
+        return _url_optional(v or "")
 
 
 class CampaignIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     pairs: List[PairIn] = Field(min_length=1)
     website_ids: Optional[List[int]] = None
+    language: str = "English"
+    image_category: str = ""
+
+
+class BulkWebsiteIn(BaseModel):
+    websites: List[WebsiteIn] = Field(min_length=1, max_length=200)
 
 
 class ApproveIn(BaseModel):
@@ -180,12 +192,13 @@ def art_dict(a: Article, full=False):
     d = {"id": a.id, "campaign_id": a.campaign_id, "website_id": a.website_id,
          "website": a.website.name if a.website else "",
          "article_number": a.article_number, "keyword": a.keyword,
-         "target_url": a.target_url, "title": a.title, "seo_score": a.seo_score,
+         "target_url": a.target_url or "", "title": a.title, "seo_score": a.seo_score,
          "words": len(re.sub(r"<[^>]+>", " ", a.content or "").split()) if a.content else 0,
          "draft_url": a.draft_url, "live_url": a.live_url, "status": a.status,
          "error": a.error, "warnings": a.warnings, "image_alt": a.image_alt,
+         "language": getattr(a, "language", "English") or "English",
+         "image_category": getattr(a, "image_category", "") or "",
          "created_at": a.created_at.isoformat() if a.created_at else None,
-         # ✅ FIX #4: expose publish timestamp
          "published_at": a.published_at.isoformat() if a.published_at else None}
     if full:
         d.update(content=a.content, meta_description=a.meta_description)
@@ -241,6 +254,41 @@ def save_website(w: WebsiteIn, db=Depends(get_db)):
     return site_dict(db, s)
 
 
+@app.post("/api/websites/bulk")
+def bulk_save_websites(body: BulkWebsiteIn, db=Depends(get_db)):
+    """Bulk add up to 200 websites at once."""
+    created, failed, errors = 0, 0, []
+    for w in body.websites:
+        try:
+            if not w.password:
+                errors.append(f"{w.name}: password required")
+                failed += 1
+                continue
+            exists = db.query(Website).filter(Website.url == w.url).first()
+            if exists:
+                errors.append(f"{w.name}: URL already exists")
+                failed += 1
+                continue
+            s = Website(
+                name=w.name, url=w.url, username=w.username,
+                password_hash=encrypt(w.password), niche=w.niche,
+                article_limit=w.article_limit, daily_limit=w.daily_limit,
+                min_words=w.min_words, max_words=w.max_words,
+                cms_type=w.cms_type, requirements=w.requirements,
+                notes=w.notes, selectors=w.selectors,
+                internal_links=w.internal_links,
+            )
+            db.add(s)
+            db.flush()
+            created += 1
+        except Exception as e:
+            db.rollback()
+            errors.append(f"{w.name}: {str(e)[:100]}")
+            failed += 1
+    db.commit()
+    return {"ok": True, "created": created, "failed": failed, "errors": errors}
+
+
 @app.post("/api/websites/test-connection")
 def test_connection(body: dict, db=Depends(get_db)):
     import requests as _rq
@@ -274,11 +322,6 @@ def list_websites(db=Depends(get_db)):
 
 @app.delete("/api/websites/{wid}")
 def delete_website(wid: int, force: bool = False, db=Depends(get_db)):
-    """
-    Delete website. If it has articles:
-    - force=False → 409 error (safety, asks for confirmation)
-    - force=True  → cascade delete articles + keyword pairs too
-    """
     s = db.get(Website, wid)
     if not s:
         raise HTTPException(404, "Website not found")
@@ -292,7 +335,6 @@ def delete_website(wid: int, force: bool = False, db=Depends(get_db)):
             f"Pass force=true to confirm."
         )
 
-    # Cascade delete: articles + keyword pairs + website
     if force:
         db.query(Article).filter(Article.website_id == wid).delete(synchronize_session=False)
         db.query(KeywordURLPair).filter(KeywordURLPair.assigned_website_id == wid).delete(synchronize_session=False)
@@ -306,7 +348,8 @@ def delete_website(wid: int, force: bool = False, db=Depends(get_db)):
 def create_campaign(c: CampaignIn, db=Depends(get_db)):
     pool = db.query(Website).filter(Website.id.in_(c.website_ids)).all() if c.website_ids \
         else db.query(Website).all()
-    camp = Campaign(name=c.name)
+    camp = Campaign(name=c.name, language=c.language or "English",
+                    image_category=c.image_category or "")
     db.add(camp)
     db.flush()
     alerts, created = [], 0
@@ -318,7 +361,7 @@ def create_campaign(c: CampaignIn, db=Depends(get_db)):
             continue
         err, site = None, None
         for s in cands:
-            err = check_guardrails(db, s, p.keyword, p.target_url, camp.id)
+            err = check_guardrails(db, s, p.keyword, p.target_url or "", camp.id)
             if not err:
                 site = s
                 break
@@ -327,14 +370,18 @@ def create_campaign(c: CampaignIn, db=Depends(get_db)):
             continue
         n = db.query(func.count(Article.id)).filter(
             Article.campaign_id == camp.id).scalar() + 1
+        art_lang = (p.language or "").strip() or (c.language or "English")
+        art_img = (p.image_category or "").strip() or (c.image_category or "")
         db.add(KeywordURLPair(campaign_id=camp.id, keyword=p.keyword,
-                              target_url=p.target_url,
-                              normalized_url=normalize_url(p.target_url),
+                              target_url=p.target_url or "",
+                              normalized_url=normalize_url(p.target_url or ""),
                               assigned_website_id=site.id))
         db.add(Article(campaign_id=camp.id, website_id=site.id, keyword=p.keyword,
-                       target_url=p.target_url,
-                       normalized_url=normalize_url(p.target_url),
-                       article_number=n))
+                       target_url=p.target_url or "",
+                       normalized_url=normalize_url(p.target_url or ""),
+                       article_number=n,
+                       language=art_lang,
+                       image_category=art_img))
         db.flush()
         created += 1
     if not created:
@@ -352,6 +399,8 @@ def list_campaigns(db=Depends(get_db)):
         pub = sum(a.status == "Published" for a in arts)
         out.append({"id": c.id, "name": c.name, "status": c.status,
                     "total": len(arts), "published": pub,
+                    "language": getattr(c, "language", "English") or "English",
+                    "image_category": getattr(c, "image_category", "") or "",
                     "created_at": c.created_at.isoformat(),
                     "running": c.id in RUNNING})
     return out
@@ -460,7 +509,6 @@ def approve(aid: int, body: dict = {}, db=Depends(get_db)):
     manual_url = (body.get("live_url") or "").strip()
     site = db.get(Website, a.website_id)
 
-    # Manual URL given → save it
     if manual_url:
         a.live_url = manual_url
         a.status = "Published"
@@ -471,7 +519,6 @@ def approve(aid: int, body: dict = {}, db=Depends(get_db)):
         db.commit()
         return {"ok": True, "live_url": manual_url, "method": "manual"}
 
-    # Auto-publish via Playwright
     from automation import publish_wp_draft
     try:
         pub = publish_wp_draft(site, a)
@@ -490,23 +537,6 @@ def approve(aid: int, body: dict = {}, db=Depends(get_db)):
         a.error = f"Publish failed: {str(e)[:300]}"
         db.commit()
         raise HTTPException(500, f"Publish failed: {str(e)}")
-    
-    # Auto-publish on WordPress
-    from automation import publish_wp_draft
-    try:
-        site = db.get(Website, a.website_id)
-        pub = publish_wp_draft(site, a)
-        a.live_url = pub["live_url"]
-        a.status = "Published"
-        a.published_at = datetime.now()
-        a.website.published_count += 1
-        if all(x.status == "Published" for x in a.campaign.articles):
-            a.campaign.status = "Completed"
-        db.commit()
-        return {"ok": True, "live_url": pub["live_url"], "message": "Published successfully"}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(500, f"Publish failed: {str(e)}")
 
 
 @app.post("/api/articles/{aid}/reject")
@@ -518,7 +548,6 @@ def reject(aid: int, bg: BackgroundTasks, regenerate: bool = True,
     if a.status not in ("Draft Created", "Waiting for Approval", "Failed", "Rejected"):
         raise HTTPException(409, f"Cannot reject article in status '{a.status}'")
 
-    # Delete old WP draft before regenerating
     if a.draft_url:
         site = db.get(Website, a.website_id)
         if site:
@@ -539,7 +568,6 @@ def reject(aid: int, bg: BackgroundTasks, regenerate: bool = True,
 
 @app.post("/api/articles/{aid}/retry")
 def retry(aid: int, bg: BackgroundTasks, db=Depends(get_db)):
-    """✅ FIX #2: Rejected articles bhi retry ho sakte hain ab."""
     a = db.get(Article, aid)
     if not a or a.status not in ("Failed", "Rejected"):
         raise HTTPException(400, "Only Failed or Rejected articles can be retried")
@@ -571,7 +599,6 @@ def dashboard(db=Depends(get_db)):
                 Article.status == "Published").count()}
 
 
-# Serve frontend files from root
 from fastapi.responses import FileResponse
 FRONTEND = os.path.dirname(os.path.abspath(__file__))
 
