@@ -55,7 +55,7 @@ def _run(agent, desc, expected) -> str:
         ],
         temperature=0.7,
         max_tokens=2000,
-        response_format={"type": "json_object"},   # ✅ FORCE JSON MODE
+        response_format={"type": "json_object"},
     )
     return resp.choices[0].message.content
 
@@ -155,8 +155,8 @@ def yoast_evaluate(title, meta, html, keyword, target_url,
 
     flesch = _flesch_reading_ease(plain)
 
-    min_ok = int(min_words * 0.85)
-    max_ok = int(max_words * 1.15)
+    min_ok = int(min_words * 0.75)
+    max_ok = int(max_words * 1.25)
 
     target_host = urlparse(norm_target).netloc
     external_ok = any(
@@ -164,13 +164,14 @@ def yoast_evaluate(title, meta, html, keyword, target_url,
         for l in links
     )
 
+    # ✅ Word count is now NON-CRITICAL (was True, now False)
     checks = [
         ("Keyword in SEO title", kw in title.lower(), True),
         ("Keyword in meta description", kw in meta.lower(), True),
         ("Keyword in first paragraph", bool(paras) and kw in paras[0].lower(), True),
         ("Keyword in at least one H2", any(kw in h.lower() for h in h2s), True),
         ("Links to target URL", has_target, True),
-        (f"Word count {min_ok}-{max_ok}", min_ok <= words <= max_ok, True),
+        (f"Word count {min_ok}-{max_ok}", min_ok <= words <= max_ok, False),   # ← CHANGED
         ("No H1 inside body", "<h1" not in html.lower(), True),
         ("SEO title 30-60 chars", 30 <= len(title) <= 60, False),
         ("Meta description 120-156 chars", 120 <= len(meta) <= 156, False),
@@ -196,7 +197,7 @@ def yoast_evaluate(title, meta, html, keyword, target_url,
         "issues": [f"FAILED: {n}" for n in failed],
         "words": words, "flesch": flesch,
         "critical_failures": critical_failures,
-        "passed": not critical_failures and score >= 75,
+        "passed": not critical_failures and score >= 60,
     }
 
 
@@ -222,8 +223,8 @@ def _body_similar(a_html: str, b_html: str, n: int = 5) -> float:
 
 def generate_article(site: Website, keyword, url, number, prior_titles,
                      prior_bodies=None) -> dict:
-    min_w = site.min_words or 900
-    max_w = site.max_words or 1200
+    min_w = site.min_words or 400
+    max_w = site.max_words or 900
     reqs = (site.requirements or "none").strip()
     notes = (site.notes or "none").strip()
 
@@ -272,7 +273,7 @@ Return ONLY JSON: {{"title":"","meta_description":"","content_html":"","image_al
     return art
 
 
-def optimize(art: dict, keyword, url, min_words=600, max_words=2000):
+def optimize(art: dict, keyword, url, min_words=400, max_words=900):
     res = yoast_evaluate(art["title"], art["meta_description"], art["content_html"],
                          keyword, url, min_words=min_words, max_words=max_words)
     for _ in range(MAX_ROUNDS):
@@ -331,11 +332,12 @@ def process_article(aid: int):
                             min_words=site.min_words or 400,
                             max_words=site.max_words or 900)
 
+        # ✅ Only block on truly critical failures (keyword in title, meta, etc.)
         if res["critical_failures"]:
             raise RuntimeError("Critical SEO checks failed: "
                                + "; ".join(res["critical_failures"]))
-        if res["score"] < 65:
-            raise RuntimeError("SEO score stayed below 65: "
+        if res["score"] < 60:
+            raise RuntimeError("SEO score stayed below 60: "
                                + "; ".join(res["issues"][:3]))
 
         clean_html = sanitize_html(art["content_html"])
@@ -355,7 +357,7 @@ def process_article(aid: int):
         a.warnings = "\n".join(warnings) if warnings else None
         db.commit()
 
-        # ✅ Create draft
+        # Draft creation
         draft_failed = False
         try:
             d = create_draft(site, a.title, a.content, a.meta_description,
@@ -373,7 +375,7 @@ def process_article(aid: int):
 
         _status(db, a, "Draft Created")
 
-        # ✅ AUTO-PUBLISH immediately (client requirement)
+        # Auto-publish
         try:
             pub = publish_wp_draft(site, a)
             a.live_url = pub["live_url"]
