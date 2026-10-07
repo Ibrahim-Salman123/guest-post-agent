@@ -242,18 +242,43 @@ async function openModal(id) {
   }
 
   const status = cur.status;
+  const canApprove = ['Draft Created', 'Waiting for Approval'].includes(status);
   const canReject  = ['Draft Created', 'Waiting for Approval', 'Failed', 'Rejected'].includes(status);
   const canDelete  = status !== 'Published';
 
+  // Show/hide Approve button + Live URL field based on status
+  const liveLabel = $('#mLive').closest('label');
+  if (liveLabel) liveLabel.hidden = !canApprove;
+  $('#mApprove').hidden = !canApprove;
   $('#mReject').hidden  = !canReject;
   $('#mDelete').hidden  = !canDelete;
   $('#mAct').hidden = status === 'Published';
 
+  $('#mLive').value = '';
   $('#modal').hidden = false;
   if (status === 'Published') $('#mMeta').textContent += ` | Live: ${cur.live_url}`;
 }
 
 $('#mClose').onclick = () => $('#modal').hidden = true;
+
+// ✅ Approve & Publish — auto-publish on real website, optional manual URL
+$('#mApprove').onclick = guard(async () => {
+  const manualUrl = $('#mLive').value.trim();
+  if (!confirm(manualUrl
+      ? `Publish this article now? Live URL will be set to: ${manualUrl}`
+      : 'Publish this article on your real website now? (Live URL will be auto-detected)')) return;
+
+  toast('Publishing... please wait', 'ok');
+  try {
+    const body = manualUrl ? {live_url: manualUrl} : {};
+    const r = await api(`/articles/${cur.id}/approve`, {method: 'POST', body});
+    $('#modal').hidden = true;
+    toast(r.live_url ? 'Published successfully! Live URL saved.' : 'Published successfully!', 'ok');
+    refresh();
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+});
 
 $('#mReject').onclick = guard(async () => {
   if (!confirm('Reject this draft and regenerate a fresh version?')) return;
