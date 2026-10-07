@@ -273,25 +273,13 @@ $('#mApprove').onclick = guard(async () => {
     const body = manualUrl ? {live_url: manualUrl} : {};
     const r = await api(`/articles/${cur.id}/approve`, {method: 'POST', body});
 
-    // ✅ Close the review window
+    // Close the review window
     $('#modal').hidden = true;
 
-    // ✅ Show success toast
-    toast('Published successfully! Check your website.', 'ok');
+    // Show success toast
+    toast(r.live_url ? 'Published successfully! Live URL saved.' : 'Published successfully! Check your website.', 'ok');
 
-    // ✅ Refresh dashboard so status shows "Published"
-    refresh();
-  } catch (e) {
-    toast(e.message, 'err');
-  }
-});
-
-  toast('Publishing... please wait', 'ok');
-  try {
-    const body = manualUrl ? {live_url: manualUrl} : {};
-    const r = await api(`/articles/${cur.id}/approve`, {method: 'POST', body});
-    $('#modal').hidden = true;
-    toast(r.live_url ? 'Published successfully! Live URL saved.' : 'Published successfully!', 'ok');
+    // Refresh dashboard so status shows "Published"
     refresh();
   } catch (e) {
     toast(e.message, 'err');
