@@ -456,18 +456,40 @@ def approve(aid: int, body: dict = {}, db=Depends(get_db)):
         raise HTTPException(404, "Article not found")
     if a.status not in ("Draft Created", "Waiting for Approval"):
         raise HTTPException(409, f"Cannot approve article in status '{a.status}'")
-    
-    # If manual live_url provided, just save it (already published externally)
-    manual_url = body.get("live_url", "").strip()
+
+    manual_url = (body.get("live_url") or "").strip()
+    site = db.get(Website, a.website_id)
+
+    # Manual URL given → save it
     if manual_url:
         a.live_url = manual_url
         a.status = "Published"
         a.published_at = datetime.now()
-        a.website.published_count += 1
+        site.published_count += 1
         if all(x.status == "Published" for x in a.campaign.articles):
             a.campaign.status = "Completed"
         db.commit()
-        return {"ok": True, "live_url": manual_url, "message": "Live URL saved manually"}
+        return {"ok": True, "live_url": manual_url, "method": "manual"}
+
+    # Auto-publish via Playwright
+    from automation import publish_wp_draft
+    try:
+        pub = publish_wp_draft(site, a)
+        a.live_url = pub["live_url"]
+        a.status = "Published"
+        a.published_at = datetime.now()
+        site.published_count += 1
+        if all(x.status == "Published" for x in a.campaign.articles):
+            a.campaign.status = "Completed"
+        db.commit()
+        return {"ok": True, "live_url": pub["live_url"],
+                "method": "playwright",
+                "message": "Published successfully on real website"}
+    except Exception as e:
+        db.rollback()
+        a.error = f"Publish failed: {str(e)[:300]}"
+        db.commit()
+        raise HTTPException(500, f"Publish failed: {str(e)}")
     
     # Auto-publish on WordPress
     from automation import publish_wp_draft
