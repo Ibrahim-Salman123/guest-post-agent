@@ -236,6 +236,7 @@ async function openModal(id) {
     </style></head><body>${content}</body></html>`;
   setIframeContent(preview);
 
+  // Draft link — show if available
   if (cur.draft_url) {
     $('#mDraft').href = cur.draft_url;
     $('#mDraft').style.display = '';
@@ -244,6 +245,7 @@ async function openModal(id) {
     $('#mDraft').style.display = 'none';
   }
 
+  // Action buttons visibility
   const status = cur.status;
   const canReject  = ['Draft Created', 'Waiting for Approval', 'Failed', 'Rejected'].includes(status);
   const canDelete  = status !== 'Published';
