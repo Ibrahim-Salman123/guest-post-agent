@@ -103,6 +103,7 @@
   <select id="campSel"></select><button id="runBtn" class="btn">Run campaign</button><button id="pauseBtn" class="btn ghost">Pause</button></div>
   <div class="scroll"><table><thead><tr><th>#</th><th>Website</th><th>Keyword</th><th>Target URL</th><th>Status</th><th>SEO</th><th>Draft</th><th>Live</th><th>Date</th><th></th></tr></thead><tbody id="progBody"></tbody></table></div></div>
 </section>
+
 <section id="v-websites" class="view" hidden>
  <div class="panel"><h3 id="wfTitle">Add a website</h3>
  <form id="siteForm" class="grid"><input type="hidden" name="id">
@@ -122,19 +123,87 @@
   <label class="full">Internal links (JSON list, optional)<textarea name="internal_links" rows="2" placeholder='[{"url":"https://site.com/blog","anchor":"our blog"},{"url":"https://site.com/about","anchor":"about us"}]'></textarea></label>
   <div class="full"><button class="btn">Save website</button>
    <button type="button" id="wfTest" class="btn ghost">Test connection</button>
-   <button type="button" id="wfReset" class="btn ghost">Clear</button></div></form></div>
+   <button type="button" id="wfReset" class="btn ghost">Clear</button></div></form>
+
+  <!-- NAYA: Bulk Add -->
+  <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">
+   <h3 style="margin:0 0 10px">Bulk add websites (CSV)</h3>
+   <p class="hint">Format: <b>name,url,username,password,niche</b> — one per line (max 200)</p>
+   <textarea id="bulkSites" rows="6" placeholder="Site A,https://sitea.com,admin,xxxx xxxx xxxx xxxx,tech
+Site B,https://siteb.com,admin,yyyy yyyy yyyy yyyy,health"></textarea>
+   <div style="margin-top:8px">
+    <button type="button" id="bulkAdd" class="btn ghost">Bulk Add Websites</button>
+   </div>
+  </div>
+ </div>
  <div class="panel"><h3>Your websites</h3><div class="scroll"><table><thead><tr><th>Name</th><th>URL</th><th>Niche</th><th>Limit</th><th>Daily</th><th>Published</th><th>Remaining</th><th></th></tr></thead><tbody id="siteBody"></tbody></table></div></div>
 </section>
+
 <section id="v-campaign" class="view" hidden>
  <div class="panel"><h3>Create a campaign</h3>
  <label>Campaign name<input id="cName" placeholder="Digital Marketing Guest Posting"></label>
+
+ <!-- NAYA: Language + Image category -->
+ <div class="grid" style="margin-top:10px">
+  <label>Article Language
+   <select id="cLang">
+    <option value="English">English</option>
+    <option value="Urdu">Urdu</option>
+    <option value="Hindi">Hindi</option>
+    <option value="Arabic">Arabic</option>
+    <option value="Spanish">Spanish</option>
+    <option value="French">French</option>
+    <option value="German">German</option>
+    <option value="Chinese">Chinese</option>
+    <option value="Portuguese">Portuguese</option>
+    <option value="Russian">Russian</option>
+   </select>
+  </label>
+  <label>Image Category (default for all)
+   <select id="cImgCat">
+    <option value="">Auto (keyword based)</option>
+    <option value="nature">Nature</option>
+    <option value="technology">Technology</option>
+    <option value="business">Business</option>
+    <option value="health fitness">Health &amp; Fitness</option>
+    <option value="food">Food</option>
+    <option value="travel">Travel</option>
+    <option value="sports">Sports</option>
+    <option value="fashion">Fashion</option>
+    <option value="education">Education</option>
+    <option value="finance">Finance</option>
+    <option value="lifestyle">Lifestyle</option>
+    <option value="entertainment">Entertainment</option>
+   </select>
+  </label>
+ </div>
+
  <p class="hint">Websites for auto-assignment (none selected = all):</p><div id="sitePool" class="pool"></div>
- <p class="hint">Keywords and target URLs. Pick a website per row, or leave on Auto.</p>
+ <p class="hint">Keywords and target URLs. URL is optional. Pick a website per row, or leave on Auto.</p>
  <div id="pairs"></div>
- <button id="addPair" class="btn ghost">Add keyword row</button> <button id="saveCamp" class="btn">Create campaign</button></div>
+ <button id="addPair" class="btn ghost">Add keyword row</button>
+
+ <!-- NAYA: Bulk keywords -->
+ <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">
+  <h3 style="margin:0 0 10px">Bulk add keywords (CSV)</h3>
+  <p class="hint">Format: <b>keyword,target_url</b> — target URL optional, one per line</p>
+  <textarea id="bulkPairs" rows="6" placeholder="taylor swift wedding,https://site.com/taylor
+crypto casino,
+health tips,https://site.com/health"></textarea>
+  <div style="margin-top:8px">
+   <button type="button" id="bulkAddPairs" class="btn ghost">Bulk Add Keywords</button>
+  </div>
+ </div>
+
+ <div style="margin-top:16px">
+  <button id="saveCamp" class="btn">Create campaign</button>
+ </div>
+ </div>
 </section>
+
 <section id="v-review" class="view" hidden><div class="panel"><h3>Drafts waiting for your approval</h3>
  <div class="scroll"><table><thead><tr><th>Website</th><th>Keyword</th><th>Title</th><th>SEO</th><th>Words</th><th></th></tr></thead><tbody id="qBody"></tbody></table></div></div></section>
+
 <section id="v-analytics" class="view" hidden>
 <div class="panel"><h3>Campaigns</h3><div class="scroll"><table><thead><tr><th>Campaign</th><th>Status</th><th>Progress</th><th>Published / total</th><th></th></tr></thead><tbody id="anCamp"></tbody></table></div></div>
  <div class="panel"><h3>Website capacity</h3><div id="anSites"></div></div>
