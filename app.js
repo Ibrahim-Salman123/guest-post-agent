@@ -245,16 +245,13 @@ async function openModal(id) {
   }
 
   const status = cur.status;
-  const canApprove = ['Draft Created', 'Waiting for Approval'].includes(status);
   const canReject  = ['Draft Created', 'Waiting for Approval', 'Failed', 'Rejected'].includes(status);
   const canDelete  = status !== 'Published';
-
 
   $('#mReject').hidden  = !canReject;
   $('#mDelete').hidden  = !canDelete;
   $('#mAct').hidden = status === 'Published';
 
-  $('#mLive').value = '';
   $('#modal').hidden = false;
   if (status === 'Published') $('#mMeta').textContent += ` | Live: ${cur.live_url}`;
 }
