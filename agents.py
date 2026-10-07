@@ -18,7 +18,7 @@ def get_model_name():
     """Returns model name without 'groq/' prefix.
     Uses llama-3.1-8b-instant: fast, non-reasoning, reliable JSON output.
     """
-    return os.getenv("GROQ_MODEL", "llama-3.1-8b-instant").replace("groq/", "")
+    return os.getenv("GROQ_MODEL", "groq/qwen/qwen3.8-27b").replace("groq/", "")
 
 
 # Kept for backward compatibility with tasks.py imports.
