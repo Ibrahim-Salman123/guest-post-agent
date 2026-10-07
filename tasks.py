@@ -1,5 +1,5 @@
 """CrewAI tasks, Yoast-style evaluator, optimization loop and the article pipeline."""
-import json, os, re, time, threading, ipaddress
+import json, os, re, time, threading
 from urllib.parse import urlparse
 from agents import get_client, get_model_name, writer_agent, seo_agent
 from automation import create_draft, validate_external_links, publish_wp_draft
@@ -45,6 +45,7 @@ def _get_lock(aid: int) -> threading.Lock:
 
 
 def _run(agent, desc, expected) -> str:
+    """Direct Groq call with proper JSON mode."""
     client = get_client()
     resp = client.chat.completions.create(
         model=get_model_name(),
@@ -53,7 +54,8 @@ def _run(agent, desc, expected) -> str:
             {"role": "user", "content": desc},
         ],
         temperature=0.7,
-        max_tokens=900,
+        max_tokens=2000,
+        response_format={"type": "json_object"},   # ✅ FORCE JSON MODE
     )
     return resp.choices[0].message.content
 
@@ -353,8 +355,7 @@ def process_article(aid: int):
         a.warnings = "\n".join(warnings) if warnings else None
         db.commit()
 
-        # ✅ FIX #3: Draft upload fail ho to status = Failed (Waiting for Approval NAHI)
-        # Article content is still saved, user Retry kar sakta hai ya View kar sakta hai.
+        # ✅ Create draft
         draft_failed = False
         try:
             d = create_draft(site, a.title, a.content, a.meta_description,
@@ -367,13 +368,12 @@ def process_article(aid: int):
             db.commit()
 
         if draft_failed:
-            # Draft upload fail — lekin article ready hai
-            # Status "Waiting for Approval" rakho + warning dikhao
             _status(db, a, "Waiting for Approval")
-        else:
-                    _status(db, a, "Draft Created")
+            return
 
-        # AUTO-PUBLISH immediately
+        _status(db, a, "Draft Created")
+
+        # ✅ AUTO-PUBLISH immediately (client requirement)
         try:
             pub = publish_wp_draft(site, a)
             a.live_url = pub["live_url"]
