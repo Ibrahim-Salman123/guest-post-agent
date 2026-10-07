@@ -372,22 +372,9 @@ def process_article(aid: int):
             _status(db, a, "Waiting for Approval")
             return
 
+        # Stop here: article waits in the review queue.
+        # Publishing happens only when the user clicks "Approve & Publish".
         _status(db, a, "Draft Created")
-
-        # Auto-publish
-        try:
-            pub = publish_wp_draft(site, a)
-            a.live_url = pub["live_url"]
-            a.status = "Published"
-            a.published_at = datetime.now()
-            a.website.published_count += 1
-            if all(x.status == "Published" for x in a.campaign.articles):
-                a.campaign.status = "Completed"
-            db.commit()
-        except Exception as pub_err:
-            a.warnings = ((a.warnings + "\n") if a.warnings else "") + \
-                f"Auto-publish failed: {str(pub_err)[:150]}"
-            _status(db, a, "Waiting for Approval")
     except Exception as e:
         db.rollback()
         a = db.get(Article, aid)
