@@ -1,5 +1,4 @@
 """CrewAI tasks, Yoast-style evaluator, optimization loop and the article pipeline."""
-ALLOWED_TAGS = {"p", "h2", "h3", "ul", "ol", "li", "a", "strong", "em", "br", "img"}
 import json, os, re, time, threading
 from urllib.parse import urlparse
 from agents import get_client, get_model_name, writer_agent, seo_agent
@@ -22,7 +21,6 @@ ALLOWED_TAGS = {"p", "h2", "h3", "ul", "ol", "li", "a", "strong", "em", "br", "i
 
 
 def sanitize_html(html: str) -> str:
-    """Remove disallowed tags & scripts. Keep only allowed HTML."""
     if not html:
         return html
     html = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL | re.I)
@@ -46,7 +44,6 @@ def _get_lock(aid: int) -> threading.Lock:
 
 
 def _run(agent, desc, expected) -> str:
-    """Direct Groq call with proper JSON mode."""
     client = get_client()
     resp = client.chat.completions.create(
         model=get_model_name(),
@@ -140,8 +137,8 @@ def yoast_evaluate(title, meta, html, keyword, target_url,
     long_ratio = sum(len(s.split()) > LONG_SENTENCE_WORDS for s in sents) / max(len(sents), 1)
     density = text.lower().count(kw) * len(kw.split()) / max(words, 1) * 100
     links = re.findall(r'<a\s[^>]*href="([^"]+)"', html, re.I)
-    norm_target = normalize_url(target_url)
-    has_target = any(normalize_url(l) == norm_target for l in links)
+    norm_target = normalize_url(target_url) if target_url else ""
+    has_target = (not target_url) or any(normalize_url(l) == norm_target for l in links)
 
     first10 = paras[:10]
     kw_in_first10 = sum(kw in p.lower() for p in first10)
@@ -159,12 +156,6 @@ def yoast_evaluate(title, meta, html, keyword, target_url,
     min_ok = int(min_words * 0.75)
     max_ok = int(max_words * 1.25)
 
-    target_host = urlparse(norm_target).netloc
-    external_ok = any(
-        l.startswith("http") and urlparse(normalize_url(l)).netloc != target_host
-        for l in links
-    )
-
     checks = [
         ("Keyword in SEO title", kw in title.lower(), True),
         ("Keyword in meta description", kw in meta.lower(), True),
@@ -180,7 +171,6 @@ def yoast_evaluate(title, meta, html, keyword, target_url,
         ("Paragraphs under 150 words",
          all(len(p.split()) <= 150 for p in paras) if paras else False, False),
         (f"Max 25% sentences over {LONG_SENTENCE_WORDS} words", long_ratio <= 0.25, False),
-        ("Has external authority link", external_ok, False),
         ("Keyphrase distributed in content", kw_distribution_ok, False),
         ("Uses transition words (3+)", transitions_ok, False),
         ("Passive voice under control (<25%)", passive_ratio <= 0.25, False),
@@ -191,7 +181,6 @@ def yoast_evaluate(title, meta, html, keyword, target_url,
     score = round(ok / len(checks) * 100)
     failed = [n for n, p, _ in checks if not p]
     critical_failures = [n for n, p, crit in checks if crit and not p]
-    in_range = min_ok <= words <= max_ok
     return {
         "score": score,
         "issues": [f"FAILED: {n}" for n in failed],
@@ -222,7 +211,7 @@ def _body_similar(a_html: str, b_html: str, n: int = 5) -> float:
 
 
 def generate_article(site: Website, keyword, url, number, prior_titles,
-                     prior_bodies=None) -> dict:
+                     prior_bodies=None, language="English", image_category="") -> dict:
     min_w = site.min_words or 400
     max_w = site.max_words or 900
     reqs = (site.requirements or "none").strip()
@@ -240,23 +229,27 @@ def generate_article(site: Website, keyword, url, number, prior_titles,
     except Exception:
         pass
 
+    target_line = (f'- Link the target URL ONCE with <a href="{url}"> using anchor text that contains the keyword.'
+                   if url else '- No target URL provided; do not add any hyperlink to a target URL.')
+
     desc = f"""Write a unique guest post for the website '{site.name}' (niche: {site.niche or 'general'}).
 Site content requirements: {reqs}. Notes: {notes}.
-Focus keyword: "{keyword}". Target URL: {url}. This is article #{number} for this campaign.
+Focus keyword: "{keyword}". This is article #{number} for this campaign.
+Write the ENTIRE article in {language}. All headings, paragraphs and text must be in {language}.
 Do NOT reuse these existing titles/angles: {prior_titles[-15:] or 'none'}.
 Rules:
 - Length strictly between {min_w} and {max_w} words.
-- HTML only using <p>,<h2>,<h3>,<ul>,<li>,<a>; no <h1>.
+- HTML only using <p>,<h2>,<h3>,<ul>,<li>,<a>,<strong>,<em>; no <h1>.
 - At least 4 <h2> and one <h2> must contain the exact keyword "{keyword}".
 - First paragraph must contain the exact keyword "{keyword}".
-- Link the target URL ONCE with <a href="{url}"> using anchor text that contains the keyword.
-- One external authority link (e.g. wikipedia.org or a reputable industry source).{internal_links_block}
+{target_line}
+- DO NOT add any external authority link or any other external hyperlink.
 - Keyword density about 1% (not stuffing).
 - Paragraphs under 100 words; mostly short sentences.
-- Use at least 3 transition words (however, therefore, moreover, etc.).
+- Use at least 3 transition words in {language}.
 - Keep passive voice to a minimum.
-- SEO title 40-60 chars starting with the keyword.
-- Meta description 130-155 chars with the keyword.
+- SEO title 40-60 chars starting with the keyword, in {language}.
+- Meta description 130-155 chars with the keyword, in {language}.
 - Also produce ONE descriptive image alt text (return in "image_alt", do not embed <img>).
 Return ONLY JSON: {{"title":"","meta_description":"","content_html":"","image_alt":""}}"""
     art = _ask_json(writer_agent(), desc,
@@ -281,7 +274,7 @@ def optimize(art: dict, keyword, url, min_words=400, max_words=900):
             break
         desc = f"""Fix ONLY these Yoast SEO problems in the article, keeping it natural and unique:
 {chr(10).join(res['issues'])}
-Focus keyword: "{keyword}"; target URL must stay linked once: {url}.
+Focus keyword: "{keyword}". {('Target URL must stay linked once: ' + url) if url else 'No target URL required.'}
 Word count must stay between {min_words} and {max_words}.
 Current article JSON: {json.dumps(art)}
 Return ONLY the corrected JSON with keys title, meta_description, content_html, image_alt."""
@@ -320,15 +313,20 @@ def process_article(aid: int):
             Article.website_id == site.id, Article.content.isnot(None),
             Article.id != a.id).all()]
 
+        language = getattr(a, 'language', None) or 'English'
+        image_category = getattr(a, 'image_category', '') or ''
+
         art = generate_article(site, a.keyword, a.target_url, a.article_number,
-                               prior_titles, prior_bodies)
+                               prior_titles, prior_bodies,
+                               language=language, image_category=image_category)
 
         if any(pt and _similar(pt, art["title"]) > 0.75 for pt in prior_titles):
             art = generate_article(site, a.keyword, a.target_url, a.article_number,
-                                   prior_titles + [art["title"]], prior_bodies)
+                                   prior_titles + [art["title"]], prior_bodies,
+                                   language=language, image_category=image_category)
 
         _status(db, a, "Optimizing")
-        art, res = optimize(art, a.keyword, a.target_url,
+        art, res = optimize(art, a.keyword, a.target_url or "",
                             min_words=site.min_words or 400,
                             max_words=site.max_words or 900)
 
@@ -350,17 +348,16 @@ def process_article(aid: int):
         warnings = []
         if res["score"] < 85:
             warnings.append("SEO score below 85: " + "; ".join(res["issues"][:2]))
-        broken = validate_external_links(clean_html)
-        if broken:
-            warnings.append("Unreachable external link(s): " + ", ".join(broken[:3]))
+        if not a.target_url:
+            warnings.append("No target URL provided for this article.")
         a.warnings = "\n".join(warnings) if warnings else None
         db.commit()
 
-        # Draft creation (with image)
         draft_failed = False
         try:
             d = create_draft(site, a.title, a.content, a.meta_description,
-                             a.keyword, slugify(a.keyword), a.image_alt)
+                             a.keyword, slugify(a.keyword), a.image_alt,
+                             image_category=image_category)
             a.draft_url = d["draft_url"]
         except Exception as draft_err:
             a.draft_url = None
@@ -372,8 +369,6 @@ def process_article(aid: int):
             _status(db, a, "Waiting for Approval")
             return
 
-        # Stop here: article waits in the review queue.
-        # Publishing happens only when the user clicks "Approve & Publish".
         _status(db, a, "Draft Created")
     except Exception as e:
         db.rollback()
