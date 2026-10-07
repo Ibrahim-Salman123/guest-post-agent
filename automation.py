@@ -1,104 +1,59 @@
-"""Draft creation: WordPress REST API first, Playwright fallback for custom CMSs.
-Posts are ALWAYS created as drafts - this module never publishes."""
+"""Simple Publisher: Playwright browser automation for any HTML/CSS/JS site.
+Logs in, creates post with image, publishes. No WordPress. No complexity."""
 import json
 import re
 import requests
-from database import Website, decrypt, normalize_url
+from database import Website, decrypt
 
 
 def _fetch_related_image(keyword: str) -> str:
-    """Fetch a related image URL from Unsplash Source (free, no API key needed)."""
+    """Fetch related image from Unsplash (free). Fallback to Picsum."""
     try:
-        # Unsplash Source API - returns a random related image
-        # Format: https://source.unsplash.com/featured/?{keyword}
-        safe_kw = re.sub(r'[^a-zA-Z0-9\s]', '', keyword).strip().replace(' ', ',')
+        safe_kw = re.sub(r'[^a-zA-Z0-9\s]', '', keyword or 'blog').strip().replace(' ', ',')
         if not safe_kw:
             safe_kw = "blog,writing"
         img_url = f"https://source.unsplash.com/featured/?{safe_kw}"
-        # Verify the image is reachable
         r = requests.head(img_url, timeout=10, allow_redirects=True)
         if r.status_code == 200:
             return img_url
     except Exception as e:
-        print(f"[image] Unsplash fetch failed: {e}")
-    
-    # Fallback to Picsum (always works)
-    try:
-        return "https://picsum.photos/1200/630"
-    except Exception:
-        return ""
+        print(f"[image] Unsplash failed: {e}")
+    return "https://picsum.photos/1200/630"
 
 
-def _wp_api(site: Website, title, html, meta, keyword, slug, image_alt="") -> dict:
-    base = site.url.rstrip("/")
-    
-    # Fetch related image
-    image_url = _fetch_related_image(keyword)
-    
-    # Build content with image at top if available
-    if image_url:
-        img_html = f'<p><img src="{image_url}" alt="{image_alt or keyword}" style="max-width:100%;height:auto;" /></p>\n'
-        html = img_html + html
-    
-    payload = {
-        "title": title,
-        "content": html,
-        "status": "draft",
-        "slug": slug,
-        "excerpt": meta,
-        "meta": {
-            "_yoast_wpseo_metadesc": meta,
-            "_yoast_wpseo_focuskw": keyword,
-            "_yoast_wpseo_title": title,
-        },
-    }
-    r = requests.post(f"{base}/wp-json/wp/v2/posts", json=payload,
-                      auth=(site.username, decrypt(site.password_hash)), timeout=60)
-    if r.status_code not in (200, 201):
-        raise RuntimeError(f"WP API {r.status_code}: {r.text[:200]}")
-    pid = r.json()["id"]
-    return {"draft_url": f"{base}/wp-admin/post.php?post={pid}&action=edit",
-            "method": "wp-api", "image_alt": image_alt, "post_id": pid,
-            "image_url": image_url}
+def _inject_image(html: str, image_url: str, alt: str) -> str:
+    """Prepend image at top of article."""
+    if not image_url:
+        return html
+    return f'<p><img src="{image_url}" alt="{alt}" style="max-width:100%;height:auto;" /></p>\n' + html
 
 
-def delete_wp_post(site: Website, draft_url: str) -> bool:
-    """Delete old WP draft on reject/regenerate."""
-    if not draft_url:
-        return False
-    m = re.search(r"[?&]post=(\d+)", draft_url)
-    if not m:
-        return False
-    pid = m.group(1)
-    base = site.url.rstrip("/")
-    try:
-        r = requests.delete(
-            f"{base}/wp-json/wp/v2/posts/{pid}?force=true",
-            auth=(site.username, decrypt(site.password_hash)),
-            timeout=30)
-        return r.status_code in (200, 201, 204)
-    except Exception:
-        return False
-
-
-def _playwright(site: Website, title, html, image_alt="") -> dict:
-    """Better HTML handling — copy as HTML, not plain text."""
+def create_draft(site: Website, title, html, meta, keyword, slug, image_alt="") -> dict:
+    """Create draft on custom site using Playwright."""
     from playwright.sync_api import sync_playwright
     s = json.loads(site.selectors or "{}")
-    need = ["login_url", "user_sel", "pass_sel", "submit_sel", "new_post_url",
-            "title_sel", "body_sel", "save_draft_sel"]
-    if any(k not in s for k in need):
-        raise RuntimeError("Playwright fallback needs selectors JSON: " + ", ".join(need))
+    required = ["login_url", "user_sel", "pass_sel", "submit_sel",
+                "new_post_url", "title_sel", "body_sel", "save_draft_sel"]
+    missing = [k for k in required if not s.get(k)]
+    if missing:
+        raise RuntimeError(f"Selectors missing: {', '.join(missing)}")
+
+    image_url = _fetch_related_image(keyword or title)
+    html_with_img = _inject_image(html, image_url, image_alt or keyword or title)
+
     with sync_playwright() as p:
-        b = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=True)
         try:
-            page = b.new_page()
+            page = browser.new_page()
+            # Login
             page.goto(s["login_url"], timeout=60000)
             page.fill(s["user_sel"], site.username)
             page.fill(s["pass_sel"], decrypt(site.password_hash))
             page.click(s["submit_sel"])
-            page.wait_for_load_state("networkidle")
+            page.wait_for_load_state("networkidle", timeout=30000)
+            # New post
             page.goto(s["new_post_url"], timeout=60000)
+            page.wait_for_load_state("networkidle", timeout=30000)
             page.fill(s["title_sel"], title)
             page.click(s["body_sel"])
             page.evaluate(
@@ -114,62 +69,60 @@ def _playwright(site: Website, title, html, image_alt="") -> dict:
                         el.dispatchEvent(new Event('change', {bubbles: true}));
                     }
                 }""",
-                [s["body_sel"], html])
+                [s["body_sel"], html_with_img])
             page.click(s["save_draft_sel"])
-            page.wait_for_load_state("networkidle")
-            return {"draft_url": page.url, "method": "playwright", "image_alt": image_alt}
+            page.wait_for_load_state("networkidle", timeout=30000)
+            draft_url = page.url
+            live_url = None
+            if s.get("publish_sel"):
+                page.click(s["publish_sel"])
+                page.wait_for_load_state("networkidle", timeout=30000)
+                live_url = page.url
+            return {"draft_url": draft_url, "live_url": live_url,
+                    "method": "playwright", "image_url": image_url}
         finally:
-            b.close()
+            browser.close()
 
 
-def create_draft(site: Website, title, html, meta, keyword, slug,
-                 image_alt: str = "") -> dict:
-    if site.cms_type != "custom":
-        try:
-            return _wp_api(site, title, html, meta, keyword, slug, image_alt)
-        except Exception as e:
-            if not (site.selectors or "").strip():
-                raise RuntimeError(f"Draft creation failed: {e}")
-    return _playwright(site, title, html, image_alt)
-
-
-def _check_url(u: str) -> bool:
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; GuestPostBot/1.0)"}
-    try:
-        r = requests.head(u, timeout=6, allow_redirects=True, headers=headers)
-        if r.status_code in (403, 405, 501) or r.status_code >= 500:
-            r = requests.get(u, timeout=6, allow_redirects=True, headers=headers, stream=True)
-    except Exception:
-        return False
-    return 200 <= r.status_code < 400
+def delete_wp_post(site: Website, draft_url: str) -> bool:
+    """No-op for custom sites."""
+    return False
 
 
 def validate_external_links(html: str, limit: int = 5) -> list:
     urls = re.findall(r'<a\s[^>]*href="(https?://[^"]+)"', html, re.I)
     broken = []
     for u in urls[:limit]:
-        if not _check_url(u):
+        try:
+            r = requests.head(u, timeout=6, allow_redirects=True)
+            if not (200 <= r.status_code < 400):
+                broken.append(u)
+        except Exception:
             broken.append(u)
     return broken
 
 
 def publish_wp_draft(site: Website, article) -> dict:
-    """Change WP post status from 'draft' to 'publish'."""
-    if not article.draft_url:
-        raise RuntimeError("No draft URL - publish not possible")
-    m = re.search(r"[?&]post=(\d+)", article.draft_url)
-    if not m:
-        raise RuntimeError("Cannot find post ID in draft URL")
-    pid = m.group(1)
-    base = site.url.rstrip("/")
-    r = requests.post(
-        f"{base}/wp-json/wp/v2/posts/{pid}",
-        json={"status": "publish"},
-        auth=(site.username, decrypt(site.password_hash)),
-        timeout=60,
-    )
-    if r.status_code not in (200, 201):
-        raise RuntimeError(f"WP publish {r.status_code}: {r.text[:200]}")
-    published = r.json()
-    live_url = published.get("link") or f"{base}/?p={pid}"
-    return {"live_url": live_url, "post_id": pid}
+    """Publish on custom site: open draft, click publish button."""
+    from playwright.sync_api import sync_playwright
+    s = json.loads(site.selectors or "{}")
+    publish_sel = s.get("publish_sel")
+    if not publish_sel:
+        raise RuntimeError("Need 'publish_sel' in selectors JSON")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.goto(s["login_url"], timeout=60000)
+            page.fill(s["user_sel"], site.username)
+            page.fill(s["pass_sel"], decrypt(site.password_hash))
+            page.click(s["submit_sel"])
+            page.wait_for_load_state("networkidle", timeout=30000)
+            page.goto(article.draft_url, timeout=60000)
+            page.wait_for_load_state("networkidle", timeout=30000)
+            page.click(publish_sel)
+            page.wait_for_load_state("networkidle", timeout=30000)
+            return {"live_url": page.url, "method": "playwright"}
+        finally:
+            browser.close()
