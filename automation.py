@@ -1,6 +1,5 @@
-"""Publisher: Playwright browser automation for HTML/CSS/JS (custom) sites.
-WordPress REST API is used ONLY if no browser selectors are set AND the site
-really is WordPress. Images come from the Unsplash API."""
+"""Publisher: WordPress API + Playwright fallback. Images from Unsplash API
+with category support. Extra external links removed."""
 import json
 import os
 import re
@@ -12,11 +11,12 @@ BROWSER_ARGS = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
 
 
 # ------------------------------------------------------------------ images
-def _fetch_related_image(keyword: str) -> str:
-    """Fetch related image URL via Unsplash API. Fallback to Picsum."""
+def _fetch_related_image(keyword: str, category: str = "") -> str:
+    """Fetch related image URL via Unsplash API. Category takes priority."""
     key = os.getenv("UNSPLASH_ACCESS_KEY") or os.getenv("UNSPLASH_API_KEY")
     try:
-        q = re.sub(r"[^a-zA-Z0-9\s]", "", keyword or "blog").strip() or "blog writing"
+        query_text = category.strip() if category and category.strip() else keyword
+        q = re.sub(r"[^a-zA-Z0-9\s]", "", query_text or "blog").strip() or "blog writing"
         if key:
             r = requests.get(
                 "https://api.unsplash.com/search/photos",
@@ -70,7 +70,6 @@ def _auth(site: Website):
 
 
 def _is_wordpress(site: Website) -> bool:
-    """True only if the site really exposes a WordPress REST API."""
     try:
         r = requests.get(f"{_base(site)}/wp-json/", timeout=15, headers=UA)
         return r.status_code == 200 and "namespaces" in r.json()
@@ -173,8 +172,8 @@ def _wp_upload_image(site: Website, image_url: str, alt: str, name: str):
 
 
 def _wp_create_post(site: Website, title, html, meta, keyword, slug,
-                    image_alt, status: str) -> dict:
-    img = _fetch_related_image(keyword or title)
+                    image_alt, status: str, image_category: str = "") -> dict:
+    img = _fetch_related_image(keyword or title, category=image_category)
     media_id, img_src = _wp_upload_image(site, img, image_alt or keyword or title, slug or keyword)
     body_html = _inject_image(html, img_src, image_alt or keyword or title)
     payload = {"title": title, "content": body_html, "status": status,
@@ -195,25 +194,29 @@ def _wp_post_id(draft_url: str):
 
 
 # ------------------------------------------------------------------ draft
-def create_draft(site: Website, title, html, meta, keyword, slug, image_alt="") -> dict:
+def create_draft(site: Website, title, html, meta, keyword, slug,
+                 image_alt="", image_category="") -> dict:
     s = _selectors(site)
     if _use_browser(s):
-        return _browser_run(site, s, title, html, keyword, image_alt, publish=False)
+        return _browser_run(site, s, title, html, keyword, image_alt,
+                            publish=False, image_category=image_category)
     if _is_wordpress(site):
-        p = _wp_create_post(site, title, html, meta, keyword, slug, image_alt, "draft")
+        p = _wp_create_post(site, title, html, meta, keyword, slug, image_alt,
+                            "draft", image_category=image_category)
         return {"draft_url": f"{_base(site)}/wp-admin/post.php?post={p['id']}&action=edit",
                 "live_url": None, "method": "wp-api", "image_url": p["image_url"]}
     raise RuntimeError(_no_method_msg())
 
 
-def _browser_run(site, s, title, html, keyword, image_alt, publish=False) -> dict:
+def _browser_run(site, s, title, html, keyword, image_alt,
+                 publish=False, image_category="") -> dict:
     required = ["login_url", "user_sel", "pass_sel", "submit_sel",
                 "new_post_url", "title_sel", "body_sel", "save_draft_sel"]
     missing = [k for k in required if not s.get(k)]
     if missing:
         raise RuntimeError(f"Selectors missing: {', '.join(missing)}")
 
-    image_url = _fetch_related_image(keyword or title)
+    image_url = _fetch_related_image(keyword or title, category=image_category)
     html_with_img = _inject_image(html, image_url, image_alt or keyword or title)
 
     sync_playwright = _sync_playwright()
@@ -231,7 +234,7 @@ def _browser_run(site, s, title, html, keyword, image_alt, publish=False) -> dic
                 if s.get("publish_sel"):
                     page.click(s["publish_sel"])
                     _settle(page)
-                live_url = page.url  # no publish_sel -> save button already publishes
+                live_url = page.url
             return {"draft_url": draft_url, "live_url": live_url,
                     "method": "playwright", "image_url": image_url}
         finally:
@@ -240,7 +243,6 @@ def _browser_run(site, s, title, html, keyword, image_alt, publish=False) -> dic
 
 # ----------------------------------------------------------------- delete
 def delete_wp_post(site: Website, draft_url: str) -> bool:
-    """Delete WP draft on reject. No-op for browser/custom sites."""
     if _use_browser(_selectors(site)):
         return False
     pid = _wp_post_id(draft_url)
@@ -288,22 +290,23 @@ def publish_wp_draft(site: Website, article) -> dict:
         p = _wp_create_post(site, article.title or article.keyword, article.content or "",
                             article.meta_description, article.keyword,
                             re.sub(r"[^a-z0-9]+", "-", (article.keyword or "").lower()).strip("-"),
-                            article.image_alt or article.keyword, "publish")
+                            article.image_alt or article.keyword, "publish",
+                            image_category=getattr(article, 'image_category', '') or '')
         return {"live_url": p["link"], "method": "wp-api"}
 
     raise RuntimeError(_no_method_msg())
 
 
 def _publish_browser(site, s, article) -> dict:
-    # Draft was never created -> create and publish in one browser session
     if not article.draft_url:
         d = _browser_run(site, s, article.title or article.keyword, article.content or "",
-                         article.keyword, article.image_alt or article.keyword, publish=True)
+                         article.keyword, article.image_alt or article.keyword,
+                         publish=True,
+                         image_category=getattr(article, 'image_category', '') or '')
         return {"live_url": d["live_url"], "method": "playwright"}
 
     publish_sel = s.get("publish_sel")
     if not publish_sel:
-        # Save button of this CMS already publishes
         return {"live_url": article.draft_url, "method": "playwright"}
 
     sync_playwright = _sync_playwright()
