@@ -1,4 +1,5 @@
 """CrewAI tasks, Yoast-style evaluator, optimization loop and the article pipeline."""
+ALLOWED_TAGS = {"p", "h2", "h3", "ul", "ol", "li", "a", "strong", "em", "br", "img"}
 import json, os, re, time, threading
 from urllib.parse import urlparse
 from agents import get_client, get_model_name, writer_agent, seo_agent
