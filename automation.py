@@ -13,8 +13,7 @@ def _wp_api(site: Website, title, html, meta, keyword, slug, image_alt="") -> di
         "content": html,
         "status": "draft",
         "slug": slug,
-        "excerpt": meta,   # ✅ Meta description save via excerpt (always works)
-        # Yoast meta — only saves if site registers these for REST (see README)
+        "excerpt": meta,
         "meta": {
             "_yoast_wpseo_metadesc": meta,
             "_yoast_wpseo_focuskw": keyword,
@@ -31,7 +30,7 @@ def _wp_api(site: Website, title, html, meta, keyword, slug, image_alt="") -> di
 
 
 def delete_wp_post(site: Website, draft_url: str) -> bool:
-    """✅ Claude #4: Delete old WP draft on reject/regenerate."""
+    """Delete old WP draft on reject/regenerate."""
     if not draft_url:
         return False
     m = re.search(r"[?&]post=(\d+)", draft_url)
@@ -50,7 +49,7 @@ def delete_wp_post(site: Website, draft_url: str) -> bool:
 
 
 def _playwright(site: Website, title, html, image_alt="") -> dict:
-    """✅ Claude #7: Better HTML handling — copy as HTML, not plain text."""
+    """Better HTML handling — copy as HTML, not plain text."""
     from playwright.sync_api import sync_playwright
     s = json.loads(site.selectors or "{}")
     need = ["login_url", "user_sel", "pass_sel", "submit_sel", "new_post_url",
@@ -68,7 +67,6 @@ def _playwright(site: Website, title, html, image_alt="") -> dict:
             page.wait_for_load_state("networkidle")
             page.goto(s["new_post_url"], timeout=60000)
             page.fill(s["title_sel"], title)
-            # ✅ HTML paste via clipboard-like evaluation (better than fill for contenteditable)
             page.click(s["body_sel"])
             page.evaluate(
                 """([sel, html]) => {
@@ -120,7 +118,6 @@ def validate_external_links(html: str, limit: int = 5) -> list:
         if not _check_url(u):
             broken.append(u)
     return broken
-
 
 
 def publish_wp_draft(site: Website, article) -> dict:
