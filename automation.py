@@ -6,8 +6,40 @@ import requests
 from database import Website, decrypt, normalize_url
 
 
+def _fetch_related_image(keyword: str) -> str:
+    """Fetch a related image URL from Unsplash Source (free, no API key needed)."""
+    try:
+        # Unsplash Source API - returns a random related image
+        # Format: https://source.unsplash.com/featured/?{keyword}
+        safe_kw = re.sub(r'[^a-zA-Z0-9\s]', '', keyword).strip().replace(' ', ',')
+        if not safe_kw:
+            safe_kw = "blog,writing"
+        img_url = f"https://source.unsplash.com/featured/?{safe_kw}"
+        # Verify the image is reachable
+        r = requests.head(img_url, timeout=10, allow_redirects=True)
+        if r.status_code == 200:
+            return img_url
+    except Exception as e:
+        print(f"[image] Unsplash fetch failed: {e}")
+    
+    # Fallback to Picsum (always works)
+    try:
+        return "https://picsum.photos/1200/630"
+    except Exception:
+        return ""
+
+
 def _wp_api(site: Website, title, html, meta, keyword, slug, image_alt="") -> dict:
     base = site.url.rstrip("/")
+    
+    # Fetch related image
+    image_url = _fetch_related_image(keyword)
+    
+    # Build content with image at top if available
+    if image_url:
+        img_html = f'<p><img src="{image_url}" alt="{image_alt or keyword}" style="max-width:100%;height:auto;" /></p>\n'
+        html = img_html + html
+    
     payload = {
         "title": title,
         "content": html,
@@ -26,7 +58,8 @@ def _wp_api(site: Website, title, html, meta, keyword, slug, image_alt="") -> di
         raise RuntimeError(f"WP API {r.status_code}: {r.text[:200]}")
     pid = r.json()["id"]
     return {"draft_url": f"{base}/wp-admin/post.php?post={pid}&action=edit",
-            "method": "wp-api", "image_alt": image_alt, "post_id": pid}
+            "method": "wp-api", "image_alt": image_alt, "post_id": pid,
+            "image_url": image_url}
 
 
 def delete_wp_post(site: Website, draft_url: str) -> bool:
