@@ -1,5 +1,6 @@
-"""Publisher: WordPress REST API (draft + publish + Unsplash image) with
-Playwright browser fallback for custom CMS sites."""
+"""Publisher: Playwright browser automation for HTML/CSS/JS (custom) sites,
+WordPress REST API only when no browser selectors are configured.
+Images come from the Unsplash API."""
 import json
 import os
 import re
@@ -47,7 +48,57 @@ def _inject_image(html: str, image_url: str, alt: str) -> str:
     return f'<p><img src="{image_url}" alt="{alt}" style="max-width:100%;height:auto;" /></p>\n' + html
 
 
-# ------------------------------------------------------------- WordPress API
+# ----------------------------------------------------------------- helpers
+def _selectors(site: Website) -> dict:
+    try:
+        d = json.loads(site.selectors or "{}")
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _use_browser(site: Website, s: dict) -> bool:
+    """Browser is used whenever selectors are configured (HTML/CSS/JS sites)."""
+    return bool(s.get("login_url"))
+
+
+def _need_selectors_msg() -> str:
+    return ("Is website ke liye browser selectors set nahi hain. Websites page me "
+            "'Browser selectors (JSON)' bharo (login_url, user_sel, pass_sel, submit_sel, "
+            "new_post_url, title_sel, body_sel, save_draft_sel, publish_sel) "
+            "aur Posting method = Custom CMS rakho.")
+
+
+def _browser_login(page, site: Website, s: dict):
+    page.goto(s["login_url"], timeout=60000)
+    page.fill(s["user_sel"], site.username)
+    page.fill(s["pass_sel"], decrypt(site.password_hash))
+    page.click(s["submit_sel"])
+    page.wait_for_load_state("networkidle", timeout=30000)
+
+
+def _fill_new_post(page, s: dict, title: str, html_with_img: str):
+    page.goto(s["new_post_url"], timeout=60000)
+    page.wait_for_load_state("networkidle", timeout=30000)
+    page.fill(s["title_sel"], title)
+    page.click(s["body_sel"])
+    page.evaluate(
+        """([sel, html]) => {
+            const el = document.querySelector(sel);
+            if (!el) throw new Error('body selector not found');
+            el.focus();
+            if (el.isContentEditable) {
+                document.execCommand('insertHTML', false, html);
+            } else {
+                el.value = html;
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+        }""",
+        [s["body_sel"], html_with_img])
+
+
+# ------------------------------------------------------------ WordPress API
 def _base(site: Website) -> str:
     return site.url.rstrip("/")
 
@@ -61,11 +112,12 @@ def _wp_err(r) -> str:
         d = r.json()
         return f"{r.status_code}: {d.get('message') or d}"
     except Exception:
-        return f"{r.status_code}: {r.text[:200]}"
+        return (f"{r.status_code}: yeh site WordPress REST API allow nahi karti "
+                f"(shayad WordPress hi nahi hai). Posting method = Custom CMS karo "
+                f"aur browser selectors bharo.")
 
 
 def _wp_upload_image(site: Website, image_url: str, alt: str, name: str):
-    """Download image and upload to WP media library. Returns (media_id, source_url) or (None, image_url)."""
     try:
         img = requests.get(image_url, timeout=30, allow_redirects=True, headers=UA)
         img.raise_for_status()
@@ -118,34 +170,30 @@ def _wp_post_id(draft_url: str):
 
 # ------------------------------------------------------------------ draft
 def create_draft(site: Website, title, html, meta, keyword, slug, image_alt="") -> dict:
-    """Create draft. WordPress -> REST API. Custom -> Playwright."""
-    s = {}
-    try:
-        s = json.loads(site.selectors or "{}")
-    except Exception:
-        s = {}
+    """Create draft. Selectors configured -> Playwright. Otherwise WordPress API."""
+    s = _selectors(site)
+
+    if _use_browser(site, s):
+        return _create_draft_browser(site, s, title, html, keyword, image_alt)
 
     if (site.cms_type or "wordpress") == "wordpress":
-        try:
-            p = _wp_create_post(site, title, html, meta, keyword, slug, image_alt, "draft")
-            edit_url = f"{_base(site)}/wp-admin/post.php?post={p['id']}&action=edit"
-            return {"draft_url": edit_url, "live_url": None,
-                    "method": "wp-api", "image_url": p["image_url"]}
-        except Exception as api_err:
-            if not s.get("login_url"):
-                raise RuntimeError(str(api_err))
-            print(f"[draft] WP API failed, browser fallback: {api_err}")
+        p = _wp_create_post(site, title, html, meta, keyword, slug, image_alt, "draft")
+        edit_url = f"{_base(site)}/wp-admin/post.php?post={p['id']}&action=edit"
+        return {"draft_url": edit_url, "live_url": None,
+                "method": "wp-api", "image_url": p["image_url"]}
 
-    return _create_draft_browser(site, s, title, html, keyword, image_alt)
+    raise RuntimeError(_need_selectors_msg())
 
 
-def _create_draft_browser(site, s, title, html, keyword, image_alt) -> dict:
+def _create_draft_browser(site, s, title, html, keyword, image_alt, publish=False) -> dict:
     from playwright.sync_api import sync_playwright
     required = ["login_url", "user_sel", "pass_sel", "submit_sel",
                 "new_post_url", "title_sel", "body_sel", "save_draft_sel"]
     missing = [k for k in required if not s.get(k)]
     if missing:
         raise RuntimeError(f"Selectors missing: {', '.join(missing)}")
+    if publish and not s.get("publish_sel"):
+        raise RuntimeError("Need 'publish_sel' in selectors JSON")
 
     image_url = _fetch_related_image(keyword or title)
     html_with_img = _inject_image(html, image_url, image_alt or keyword or title)
@@ -154,126 +202,5 @@ def _create_draft_browser(site, s, title, html, keyword, image_alt) -> dict:
         browser = p.chromium.launch(headless=True)
         try:
             page = browser.new_page()
-            page.goto(s["login_url"], timeout=60000)
-            page.fill(s["user_sel"], site.username)
-            page.fill(s["pass_sel"], decrypt(site.password_hash))
-            page.click(s["submit_sel"])
-            page.wait_for_load_state("networkidle", timeout=30000)
-            page.goto(s["new_post_url"], timeout=60000)
-            page.wait_for_load_state("networkidle", timeout=30000)
-            page.fill(s["title_sel"], title)
-            page.click(s["body_sel"])
-            page.evaluate(
-                """([sel, html]) => {
-                    const el = document.querySelector(sel);
-                    if (!el) throw new Error('body selector not found');
-                    el.focus();
-                    if (el.isContentEditable) {
-                        document.execCommand('insertHTML', false, html);
-                    } else {
-                        el.value = html;
-                        el.dispatchEvent(new Event('input', {bubbles: true}));
-                        el.dispatchEvent(new Event('change', {bubbles: true}));
-                    }
-                }""",
-                [s["body_sel"], html_with_img])
-            page.click(s["save_draft_sel"])
-            page.wait_for_load_state("networkidle", timeout=30000)
-            draft_url = page.url
-            live_url = None
-            if s.get("publish_sel"):
-                page.click(s["publish_sel"])
-                page.wait_for_load_state("networkidle", timeout=30000)
-                live_url = page.url
-            return {"draft_url": draft_url, "live_url": live_url,
-                    "method": "playwright", "image_url": image_url}
-        finally:
-            browser.close()
-
-
-# ----------------------------------------------------------------- delete
-def delete_wp_post(site: Website, draft_url: str) -> bool:
-    """Delete WP draft (used on reject). No-op for custom sites."""
-    if (site.cms_type or "wordpress") != "wordpress":
-        return False
-    pid = _wp_post_id(draft_url)
-    if not pid:
-        return False
-    r = requests.delete(f"{_base(site)}/wp-json/wp/v2/posts/{pid}",
-                        auth=_auth(site), params={"force": "true"},
-                        timeout=30, headers=UA)
-    return r.status_code in (200, 201)
-
-
-def validate_external_links(html: str, limit: int = 5) -> list:
-    urls = re.findall(r'<a\s[^>]*href="(https?://[^"]+)"', html, re.I)
-    broken = []
-    for u in urls[:limit]:
-        try:
-            r = requests.head(u, timeout=6, allow_redirects=True, headers=UA)
-            if not (200 <= r.status_code < 400):
-                broken.append(u)
-        except Exception:
-            broken.append(u)
-    return broken
-
-
-# ---------------------------------------------------------------- publish
-def publish_wp_draft(site: Website, article) -> dict:
-    """Publish for real. WordPress -> API (publish draft, or create+publish if
-    draft is missing). Custom -> Playwright publish button."""
-    s = {}
-    try:
-        s = json.loads(site.selectors or "{}")
-    except Exception:
-        s = {}
-
-    if (site.cms_type or "wordpress") == "wordpress":
-        try:
-            pid = _wp_post_id(article.draft_url)
-            if pid:
-                r = requests.post(f"{_base(site)}/wp-json/wp/v2/posts/{pid}",
-                                  auth=_auth(site), json={"status": "publish"},
-                                  timeout=60, headers=UA)
-                if r.status_code in (200, 201):
-                    return {"live_url": r.json().get("link"), "method": "wp-api"}
-                if r.status_code != 404:
-                    raise RuntimeError(f"WordPress API error {_wp_err(r)}")
-            # No draft (upload had failed) or draft deleted -> create & publish directly
-            p = _wp_create_post(site, article.title or article.keyword, article.content or "",
-                                article.meta_description, article.keyword,
-                                re.sub(r"[^a-z0-9]+", "-", (article.keyword or "").lower()).strip("-"),
-                                article.image_alt or article.keyword, "publish")
-            return {"live_url": p["link"], "method": "wp-api"}
-        except Exception as api_err:
-            if not (s.get("login_url") and s.get("publish_sel") and article.draft_url):
-                raise RuntimeError(str(api_err))
-            print(f"[publish] WP API failed, browser fallback: {api_err}")
-
-    return _publish_browser(site, s, article)
-
-
-def _publish_browser(site, s, article) -> dict:
-    from playwright.sync_api import sync_playwright
-    publish_sel = s.get("publish_sel")
-    if not publish_sel:
-        raise RuntimeError("Need 'publish_sel' in selectors JSON")
-    if not article.draft_url:
-        raise RuntimeError("No draft URL saved for this article")
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        try:
-            page = browser.new_page()
-            page.goto(s["login_url"], timeout=60000)
-            page.fill(s["user_sel"], site.username)
-            page.fill(s["pass_sel"], decrypt(site.password_hash))
-            page.click(s["submit_sel"])
-            page.wait_for_load_state("networkidle", timeout=30000)
-            page.goto(article.draft_url, timeout=60000)
-            page.wait_for_load_state("networkidle", timeout=30000)
-            page.click(publish_sel)
-            page.wait_for_load_state("networkidle", timeout=30000)
-            return {"live_url": page.url, "method": "playwright"}
-        finally:
-            browser.close()
+            _browser_login(page, site, s)
+            _fill_new_post(page,
