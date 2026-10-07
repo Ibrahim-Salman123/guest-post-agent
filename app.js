@@ -71,7 +71,7 @@ function renderAll() {
 
   const rows = S.arts.filter(a => String(a.campaign_id) === String(S.camp)).sort((a, b) => a.article_number - b.article_number);
   $('#progBody').innerHTML = rows.map(a => `<tr><td>${a.article_number}</td><td>${esc(a.website)}</td><td>${esc(a.keyword)}</td>
-   <td>${link(a.target_url, 'Link')}</td>${statusCell(a)}
+   <td>${link(a.target_url, a.target_url ? 'Link' : '-')}</td>${statusCell(a)}
    <td>${a.seo_score ?? '-'}</td><td>${link(a.draft_url, 'Draft')}</td><td>${link(a.live_url, 'Live')}</td><td>${(a.created_at || '').slice(0, 10)}</td>
    ${actionCell(a)}</tr>`).join('') || '<tr><td colspan="10">Create a campaign to see progress here.</td></tr>';
 
@@ -94,8 +94,12 @@ function renderAll() {
   if (pool.dataset.hash !== hash) { pool.dataset.hash = hash;
     pool.innerHTML = S.sites.map(s => `<label><input type="checkbox" value="${s.id}">${esc(s.name)} (${s.remaining} left)</label>`).join('') || '<span class="hint">Add websites first.</span>'; }
 
-  document.querySelectorAll('#pairs select').forEach(sel => { const v = sel.value;
-    sel.innerHTML = '<option value="">Auto-assign</option>' + S.sites.map(s => `<option value="${s.id}">${esc(s.name)} (${s.remaining} left)</option>`).join(''); sel.value = v; });
+  // Only update the website auto-assign dropdown; leave lang/image dropdowns alone
+  document.querySelectorAll('#pairs select.pw').forEach(sel => {
+    const v = sel.value;
+    sel.innerHTML = '<option value="">Auto-assign</option>' + S.sites.map(s => `<option value="${s.id}">${esc(s.name)} (${s.remaining} left)</option>`).join('');
+    sel.value = v;
+  });
 }
 
 $('#campSel').onchange = e => { S.camp = e.target.value; renderAll(); };
@@ -169,23 +173,141 @@ $('#siteForm').onsubmit = guard(async e => {
   await api('/websites', {method: 'POST', body: o}); toast('Website saved', 'ok'); resetSite(); refresh();
 });
 
+// ============================================================
+// BULK ADD WEBSITES
+// ============================================================
+$('#bulkAdd').onclick = guard(async () => {
+  const txt = $('#bulkSites').value.trim();
+  if (!txt) throw new Error('Paste CSV data first');
+  const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
+  const websites = [];
+  for (const line of lines) {
+    const parts = line.split(',').map(p => p.trim());
+    if (parts.length < 4) continue;
+    websites.push({
+      name: parts[0],
+      url: parts[1],
+      username: parts[2],
+      password: parts[3],
+      niche: parts[4] || '',
+      article_limit: 10,
+      daily_limit: 1,
+      min_words: 900,
+      max_words: 1200,
+      cms_type: 'wordpress',
+    });
+  }
+  if (!websites.length) throw new Error('No valid rows found');
+  const r = await api('/websites/bulk', {method: 'POST', body: {websites}});
+  toast(`Added ${r.created} websites (${r.failed} failed)`, r.failed ? 'err' : 'ok');
+  if (r.errors && r.errors.length) console.warn('Bulk errors:', r.errors);
+  $('#bulkSites').value = '';
+  refresh();
+});
+
+// ============================================================
+// BULK ADD KEYWORDS
+// ============================================================
+$('#bulkAddPairs').onclick = () => {
+  const txt = $('#bulkPairs').value.trim();
+  if (!txt) { toast('Paste CSV first', 'err'); return; }
+  const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
+  let count = 0;
+  for (const line of lines) {
+    const idx = line.indexOf(',');
+    let kw, url;
+    if (idx === -1) { kw = line.trim(); url = ''; }
+    else { kw = line.slice(0, idx).trim(); url = line.slice(idx + 1).trim(); }
+    if (!kw) continue;
+    addPairWithValues(kw, url);
+    count++;
+  }
+  toast(`Added ${count} keyword rows`, 'ok');
+  $('#bulkPairs').value = '';
+  renderAll();
+};
+
+// ============================================================
+// KEYWORD ROW BUILDERS
+// ============================================================
+function _pairRowInner(keyword = '', url = '') {
+  return `<input placeholder="Keyword" class="pk" value="${esc(keyword)}">
+    <input placeholder="Target URL (optional)" class="pu" type="text" value="${esc(url)}">
+    <select class="pw"></select>
+    <select class="plang">
+      <option value="">Language (default)</option>
+      <option value="English">English</option>
+      <option value="Urdu">Urdu</option>
+      <option value="Hindi">Hindi</option>
+      <option value="Arabic">Arabic</option>
+      <option value="Spanish">Spanish</option>
+      <option value="French">French</option>
+      <option value="German">German</option>
+    </select>
+    <select class="pimg">
+      <option value="">Image (default)</option>
+      <option value="nature">Nature</option>
+      <option value="technology">Technology</option>
+      <option value="business">Business</option>
+      <option value="health fitness">Health</option>
+      <option value="food">Food</option>
+      <option value="travel">Travel</option>
+      <option value="sports">Sports</option>
+      <option value="fashion">Fashion</option>
+    </select>
+    <button type="button" class="btn ghost sm">Remove</button>`;
+}
+
 function addPair() {
   const d = document.createElement('div'); d.className = 'prow';
-  d.innerHTML = `<input placeholder="Keyword" class="pk"><input placeholder="https://target-url.com/page" class="pu" type="url"><select class="pw"></select><button type="button" class="btn ghost sm">Remove</button>`;
-  d.querySelector('button').onclick = () => d.remove(); $('#pairs').appendChild(d); renderAll();
+  d.innerHTML = _pairRowInner();
+  d.querySelector('button').onclick = () => d.remove();
+  $('#pairs').appendChild(d);
+  renderAll();
 }
-$('#addPair').onclick = addPair; addPair();
 
+function addPairWithValues(keyword, url) {
+  const d = document.createElement('div'); d.className = 'prow';
+  d.innerHTML = _pairRowInner(keyword, url);
+  d.querySelector('button').onclick = () => d.remove();
+  $('#pairs').appendChild(d);
+}
+
+$('#addPair').onclick = addPair;
+addPair();
+
+// ============================================================
+// SAVE CAMPAIGN
+// ============================================================
 $('#saveCamp').onclick = guard(async () => {
-  const pairs = [...document.querySelectorAll('.prow')].map(r => ({keyword: r.querySelector('.pk').value.trim(), target_url: r.querySelector('.pu').value.trim(), website_id: r.querySelector('.pw').value ? +r.querySelector('.pw').value : null})).filter(p => p.keyword || p.target_url);
+  const campLang = ($('#cLang') && $('#cLang').value) || 'English';
+  const campImg = ($('#cImgCat') && $('#cImgCat').value) || '';
+  const pairs = [...document.querySelectorAll('.prow')].map(r => ({
+    keyword: r.querySelector('.pk').value.trim(),
+    target_url: r.querySelector('.pu').value.trim(),
+    website_id: r.querySelector('.pw').value ? +r.querySelector('.pw').value : null,
+    language: r.querySelector('.plang') ? r.querySelector('.plang').value : '',
+    image_category: r.querySelector('.pimg') ? r.querySelector('.pimg').value : '',
+  })).filter(p => p.keyword);
+  if (!pairs.length) throw new Error('Add at least one keyword');
   const ids = [...document.querySelectorAll('#sitePool input:checked')].map(i => +i.value);
-  const r = await api('/campaigns', {method: 'POST', body: {name: $('#cName').value.trim(), pairs, website_ids: ids.length ? ids : null}});
+  const r = await api('/campaigns', {method: 'POST', body: {
+    name: $('#cName').value.trim(),
+    pairs,
+    website_ids: ids.length ? ids : null,
+    language: campLang,
+    image_category: campImg,
+  }});
   r.alerts.forEach(a => toast('Skipped: ' + a, 'err'));
   toast(`Campaign created with ${r.created} article(s)`, 'ok');
-  S.camp = String(r.campaign_id); $('#cName').value = ''; $('#pairs').innerHTML = ''; addPair();
+  S.camp = String(r.campaign_id);
+  $('#cName').value = ''; $('#pairs').innerHTML = ''; addPair();
   await refresh(); document.querySelector('[data-view=dashboard]').click();
 });
 
+// ============================================================
+// MODAL
+// ============================================================
 let cur = null;
 
 function setIframeContent(html) {
@@ -202,7 +324,7 @@ function setIframeContent(html) {
 async function openModal(id) {
   cur = await api('/articles/' + id);
   $('#mTitle').textContent = cur.title || cur.keyword;
-  $('#mMeta').textContent = `${cur.website} | Keyword: ${cur.keyword} | Target: ${cur.target_url} | SEO ${cur.seo_score ?? '-'} | Meta: ${cur.meta_description || '-'}`;
+  $('#mMeta').textContent = `${cur.website} | Keyword: ${cur.keyword} | Target: ${cur.target_url || '—'} | Language: ${cur.language || 'English'} | Image: ${cur.image_category || 'auto'} | SEO ${cur.seo_score ?? '-'} | Meta: ${cur.meta_description || '-'}`;
   if (cur.image_alt) $('#mMeta').textContent += ` | Image alt: ${cur.image_alt}`;
 
   const warnEl = $('#mWarn');
@@ -247,7 +369,6 @@ async function openModal(id) {
   const canReject  = ['Draft Created', 'Waiting for Approval', 'Failed', 'Rejected'].includes(status);
   const canDelete  = status !== 'Published';
 
-  // Show/hide Approve button + Live URL field based on status
   const liveLabel = $('#mLive').closest('label');
   if (liveLabel) liveLabel.hidden = !canApprove;
   $('#mApprove').hidden = !canApprove;
@@ -272,14 +393,8 @@ $('#mApprove').onclick = guard(async () => {
   try {
     const body = manualUrl ? {live_url: manualUrl} : {};
     const r = await api(`/articles/${cur.id}/approve`, {method: 'POST', body});
-
-    // Close the review window
     $('#modal').hidden = true;
-
-    // Show success toast
     toast(r.live_url ? 'Published successfully! Live URL saved.' : 'Published successfully! Check your website.', 'ok');
-
-    // Refresh dashboard so status shows "Published"
     refresh();
   } catch (e) {
     toast(e.message, 'err');
