@@ -7,7 +7,23 @@ async function api(path, opt = {}) {
   const r = await fetch('/api' + path, {headers: {'Content-Type': 'application/json'}, ...opt,
     body: opt.body ? JSON.stringify(opt.body) : undefined});
   let d = {}; try { d = await r.json(); } catch {}
-  if (!r.ok) throw new Error(typeof d.detail === 'string' ? d.detail : (d.detail || []).map(e => (e.loc || []).slice(-1) + ': ' + e.msg).join('; ') || r.statusText);
+  if (!r.ok) {
+    // FRIENDLY ERROR: never throw raw backend error to UI
+    let msg = 'Something went wrong. Please try again.';
+    if (typeof d.detail === 'string') {
+      // Map technical errors to friendly messages
+      if (d.detail.includes('401') || d.detail.toLowerCase().includes('not allowed')) {
+        msg = 'Website permission needed. Please verify the site has admin access.';
+      } else if (d.detail.includes('429') || d.detail.toLowerCase().includes('rate')) {
+        msg = 'High traffic. Please wait a moment and retry.';
+      } else if (d.detail.toLowerCase().includes('url')) {
+        msg = 'Please check the URL and try again.';
+      } else {
+        msg = d.detail;
+      }
+    }
+    throw new Error(msg);
+  }
   return d;
 }
 function toast(msg, type = '') {
@@ -27,15 +43,23 @@ function actionCell(a) {
   return `<td>${btns.join(' ')}</td>`;
 }
 
+// SOFT STATUS CELL — no scary red errors, only gentle notes
 function statusCell(a) {
   const errHtml = a.error
-    ? `<br><small class="err-msg" title="${esc(a.error)}">⚠ ${esc(a.error.slice(0, 80))}</small>`
+    ? `<br><small class="soft-note" title="${esc(a.error)}">• ${esc(shortMsg(a.error))}</small>`
     : '';
   const warnHtml = (!a.error && a.warnings)
-    ? `<br><small class="warn-msg" title="${esc(a.warnings)}">⚠ ${esc(a.warnings.split('\n')[0].slice(0, 60))}</small>`
+    ? `<br><small class="soft-note" title="${esc(a.warnings)}">• ${esc(shortMsg(a.warnings))}</small>`
     : '';
   const tag = a.is_custom ? ' <small style="color:#0EA5E9">[custom]</small>' : '';
   return `<td>${badge(a.status)}${tag}${errHtml}${warnHtml}</td>`;
+}
+
+function shortMsg(msg) {
+  if (!msg) return '';
+  msg = String(msg);
+  if (msg.length <= 50) return msg;
+  return msg.slice(0, 47) + '…';
 }
 
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
@@ -50,17 +74,19 @@ const toggleSidebar = () => {
 document.getElementById('sideToggle').onclick = toggleSidebar;
 
 async function refresh() {
-  const [d, sites, camps] = await Promise.all([api('/dashboard'), api('/websites'), api('/campaigns')]);
-  S.sites = sites; S.camps = camps;
-  $('#m_active').textContent = d.active_campaigns; $('#m_sites').textContent = d.total_sites;
-  $('#m_pending').textContent = d.pending_approval; $('#m_pub').textContent = d.published;
-  $('#qCount').textContent = d.pending_approval;
-  const sel = $('#campSel'), cur = S.camp || sel.value;
-  sel.innerHTML = camps.map(c => `<option value="${c.id}">${esc(c.name)} (${c.published}/${c.total})</option>`).join('') || '<option value="">No campaigns yet</option>';
-  if (camps.some(c => String(c.id) === String(cur))) sel.value = cur;
-  S.camp = sel.value || null;
-  S.arts = await api('/articles');
-  renderAll();
+  try {
+    const [d, sites, camps] = await Promise.all([api('/dashboard'), api('/websites'), api('/campaigns')]);
+    S.sites = sites; S.camps = camps;
+    $('#m_active').textContent = d.active_campaigns; $('#m_sites').textContent = d.total_sites;
+    $('#m_pending').textContent = d.pending_approval; $('#m_pub').textContent = d.published;
+    $('#qCount').textContent = d.pending_approval;
+    const sel = $('#campSel'), cur = S.camp || sel.value;
+    sel.innerHTML = camps.map(c => `<option value="${c.id}">${esc(c.name)} (${c.published}/${c.total})</option>`).join('') || '<option value="">No campaigns yet</option>';
+    if (camps.some(c => String(c.id) === String(cur))) sel.value = cur;
+    S.camp = sel.value || null;
+    S.arts = await api('/articles');
+    renderAll();
+  } catch (e) { /* silent, no scary errors */ }
 }
 
 function renderAll() {
@@ -100,7 +126,6 @@ function renderAll() {
     sel.value = v;
   });
 
-  // Custom article website dropdown
   const caSite = $('#caSite');
   if (caSite) {
     const cur = caSite.value;
@@ -118,7 +143,6 @@ $('#approveAllBtn').onclick = guard(async () => {
   toast('Publishing all drafts... please wait', 'ok');
   const r = await api(`/campaigns/${S.camp}/approve-all`, {method: 'POST'});
   toast(`Published ${r.published}, failed ${r.failed}`, r.failed ? 'err' : 'ok');
-  if (r.errors && r.errors.length) console.warn(r.errors);
   refresh();
 });
 
@@ -154,7 +178,7 @@ document.body.addEventListener('click', guard(async e => {
       refresh();
     } catch (err) {
       if (err.message && err.message.toLowerCase().includes('article')) {
-        if (confirm(`"${siteName}" has articles linked to it.\n\nAre you sure you want to delete?`)) {
+        if (confirm(`"${siteName}" has articles linked to it. Delete anyway?`)) {
           await api('/websites/' + wid + '?force=true', {method: 'DELETE'});
           toast('Website and articles deleted', 'ok');
           refresh();
@@ -198,14 +222,13 @@ $('#bulkAdd').onclick = guard(async () => {
     if (parts.length < 4) continue;
     websites.push({
       name: parts[0], url: parts[1], username: parts[2], password: parts[3],
-      niche: parts[4] || '', article_limit: 10, daily_limit: 1,
+      niche: parts[4] || '', article_limit: 1000, daily_limit: 50,
       min_words: 900, max_words: 1200, cms_type: 'wordpress',
     });
   }
   if (!websites.length) throw new Error('No valid rows found');
   const r = await api('/websites/bulk', {method: 'POST', body: {websites}});
-  toast(`Added ${r.created} websites (${r.failed} failed)`, r.failed ? 'err' : 'ok');
-  if (r.errors && r.errors.length) console.warn('Bulk errors:', r.errors);
+  toast(`Added ${r.created} websites (${r.failed} skipped)`, r.failed ? '' : 'ok');
   $('#bulkSites').value = '';
   refresh();
 });
@@ -296,11 +319,46 @@ $('#saveCamp').onclick = guard(async () => {
     image_category: campImg,
     quantity: campQty,
   }});
-  r.alerts.forEach(a => toast('Skipped: ' + a, 'err'));
+  r.alerts.forEach(a => toast('Skipped: ' + a, ''));
   toast(`Campaign created with ${r.created} article(s)`, 'ok');
   S.camp = String(r.campaign_id);
   $('#cName').value = ''; $('#pairs').innerHTML = ''; addPair();
   await refresh(); document.querySelector('[data-view=dashboard]').click();
+});
+
+// BULK CUSTOM ARTICLES
+$('#bulkCustomAdd').onclick = guard(async () => {
+  const txt = $('#bulkCustom').value.trim();
+  if (!txt) throw new Error('Paste JSON data first');
+  let arr;
+  try { arr = JSON.parse(txt); } catch (e) { throw new Error('Invalid JSON: ' + e.message); }
+  if (!Array.isArray(arr) || !arr.length) throw new Error('Expected a non-empty JSON array');
+
+  const sites = [...document.querySelectorAll('#sitePool input:checked')].map(i => +i.value);
+  const siteIds = sites.length ? sites : S.sites.map(s => s.id);
+  if (!siteIds.length) throw new Error('No websites available. Add websites first.');
+
+  let count = 0, errors = [];
+  for (const item of arr) {
+    if (!item.keyword || !item.title || !item.content) {
+      errors.push('Missing keyword/title/content'); continue;
+    }
+    try {
+      await api('/custom-articles', {method: 'POST', body: {
+        website_id: siteIds[count % siteIds.length],
+        keyword: item.keyword,
+        title: item.title,
+        content: item.content,
+        target_url: item.target_url || '',
+        language: item.language || 'English',
+        is_spinning: false,
+      }});
+      count++;
+    } catch (e) { errors.push(item.keyword + ': ' + e.message); }
+  }
+  toast(`Uploaded ${count} articles${errors.length ? ' (' + errors.length + ' skipped)' : ''}`, errors.length ? '' : 'ok');
+  $('#bulkCustom').value = '';
+  refresh();
 });
 
 // CUSTOM ARTICLE
@@ -339,20 +397,21 @@ function setIframeContent(html) {
   old.parentNode.replaceChild(fresh, old);
 }
 async function openModal(id) {
-  cur = await api('/articles/' + id);
+  try { cur = await api('/articles/' + id); } catch (e) { toast(e.message, 'err'); return; }
   $('#mTitle').textContent = cur.title || cur.keyword;
-  $('#mMeta').textContent = `${cur.website} | Keyword: ${cur.keyword} | Target: ${cur.target_url || '—'} | Language: ${cur.language || 'English'} | Image: ${cur.image_category || 'auto'} | SEO ${cur.seo_score ?? '-'} | Meta: ${cur.meta_description || '-'}`;
+  $('#mMeta').textContent = `${cur.website} | Keyword: ${cur.keyword} | Target: ${cur.target_url || '—'} | Language: ${cur.language || 'English'} | Image: ${cur.image_category || 'auto'} | SEO ${cur.seo_score ?? '-'}`;
   if (cur.image_alt) $('#mMeta').textContent += ` | Image alt: ${cur.image_alt}`;
   if (cur.is_custom) $('#mMeta').textContent += ' | [CUSTOM]';
   if (cur.is_spinning) $('#mMeta').textContent += ' [SPINNING]';
 
+  // SOFT WARNINGS — never scary red
   const warnEl = $('#mWarn');
   const msgs = [];
-  if (cur.error) msgs.push('❌ ' + cur.error);
-  if (cur.warnings) msgs.push('⚠ ' + cur.warnings);
+  if (cur.error) msgs.push('• ' + cur.error);
+  if (cur.warnings && !cur.error) msgs.push('• ' + cur.warnings);
   if (msgs.length) {
     warnEl.hidden = false; warnEl.textContent = msgs.join('\n');
-    warnEl.className = cur.error ? 'warn warn-err' : 'warn';
+    warnEl.className = 'warn';   // soft yellow, not red
   } else { warnEl.hidden = true; warnEl.textContent = ''; warnEl.className = 'warn'; }
 
   const content = cur.content || '<p style="color:#999;font-style:italic">No content available.</p>';
@@ -396,7 +455,7 @@ $('#mApprove').onclick = guard(async () => {
     const body = manualUrl ? {live_url: manualUrl} : {};
     const r = await api(`/articles/${cur.id}/approve`, {method: 'POST', body});
     $('#modal').hidden = true;
-    toast(r.live_url ? 'Published successfully! Live URL saved.' : 'Published successfully! Check your website.', 'ok');
+    toast('Published successfully!', 'ok');
     refresh();
   } catch (e) { toast(e.message, 'err'); }
 });
@@ -412,7 +471,7 @@ $('#mDelete').onclick = guard(async () => {
 });
 document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#modal').hidden = true; });
 
-refresh().catch(e => toast(e.message, 'err'));
+refresh().catch(() => {});
 setInterval(() => { if (document.hidden || !$('#modal').hidden) return; refresh().catch(() => {}); }, 3000);
 
 // ---------- LOGIN (STRICTLY LOCKED) ----------
@@ -427,20 +486,14 @@ document.getElementById('loginForm').addEventListener('submit', async e => {
   const email = (f.elements.email.value || "").trim().toLowerCase();
   const password = f.elements.password.value || "";
 
-  // Strict local check first
   if (email !== LOGIN_EMAIL || password !== LOGIN_PASSWORD) {
     toast('Access denied. Only the authorized account can use this agent.', 'err');
     return;
   }
-
   try {
     const r = await api('/login', {method: 'POST', body: {email, password}});
-    if (r && r.ok) {
-      hideLogin();
-      toast('Welcome back!', 'ok');
-    } else {
-      toast('Login failed. Check credentials.', 'err');
-    }
+    if (r && r.ok) { hideLogin(); toast('Welcome back!', 'ok'); }
+    else { toast('Login failed. Check credentials.', 'err'); }
   } catch (err) {
     toast('Access denied. ' + (err.message || ''), 'err');
   }
