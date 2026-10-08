@@ -19,15 +19,21 @@ TRANSITION_WORDS = {
 
 ALLOWED_TAGS = {"p", "h2", "h3", "ul", "ol", "li", "a", "strong", "em", "br", "img"}
 
+# Fallback models (rotate on rate limit)
+FALLBACK_MODELS = [
+    os.getenv("GROQ_MODEL_FALLBACK", "llama-3.3-70b-versatile"),
+    "llama-3.1-8b-instant",
+    "mixtral-8x7b-32768",
+]
+
 
 # --------------------------------------------------------- SPINNING RESOLVER
 _SPIN_RE = re.compile(r"\{([^{}]+)\}")
 
 def resolve_spinning(text: str) -> str:
-    """Replace {a|b|c} with a random option. Supports nested via repeated passes."""
     if not text:
         return text
-    for _ in range(6):  # max nesting depth
+    for _ in range(6):
         if "{" not in text or "}" not in text:
             break
         def repl(m):
@@ -60,10 +66,12 @@ def _get_lock(aid: int) -> threading.Lock:
         return _LOCKS[aid]
 
 
-def _run(agent, desc, expected) -> str:
+def _run(agent, desc, expected, model=None) -> str:
+    """Direct Groq call. Optionally override model."""
     client = get_client()
+    use_model = model or get_model_name()
     resp = client.chat.completions.create(
-        model=get_model_name(),
+        model=use_model,
         messages=[
             {"role": "system", "content": expected},
             {"role": "user", "content": desc},
@@ -94,13 +102,20 @@ def _json(text: str) -> dict:
 
 
 def _ask_json(agent, desc, expected) -> dict:
+    """Retry with exponential backoff + model rotation on 429."""
     last_err = None
-    for attempt in range(4):
+    models_to_try = [None] + FALLBACK_MODELS  # None = primary model
+    total_attempts = 0
+    max_attempts = 12
+
+    while total_attempts < max_attempts:
+        total_attempts += 1
+        model = models_to_try[(total_attempts - 1) % len(models_to_try)]
         try:
-            raw = _run(agent, desc, expected)
+            raw = _run(agent, desc, expected, model=model)
             if not raw or not raw.strip():
                 last_err = "Empty LLM response"
-                time.sleep(6)
+                time.sleep(8)
                 continue
             d = _json(raw)
             if all(k in d for k in ("title", "meta_description", "content_html")):
@@ -108,15 +123,19 @@ def _ask_json(agent, desc, expected) -> dict:
             last_err = f"Missing keys: {list(d.keys())}"
         except Exception as e:
             last_err = str(e)
-            if "rate" in str(e).lower() or "429" in str(e):
-                wait = 15 * (attempt + 1)
-                print(f"Rate limit hit. Waiting {wait}s before retry...")
+            err_str = str(e).lower()
+            if "429" in err_str or "rate" in err_str or "quota" in err_str:
+                wait = min(60, 15 * total_attempts)  # 15s, 30s, 45s, 60s cap
+                print(f"[rate-limit] attempt {total_attempts}: waiting {wait}s, trying next model...")
                 time.sleep(wait)
-            elif "empty" in str(e).lower() or "none" in str(e).lower():
-                time.sleep(6)
+            elif "empty" in err_str or "none" in err_str:
+                time.sleep(8)
+            elif "model" in err_str and "not" in err_str:
+                # Model not available, rotate faster
+                time.sleep(2)
             else:
-                time.sleep(3)
-    raise RuntimeError(f"LLM did not return valid article JSON after 4 attempts: {last_err}")
+                time.sleep(4)
+    raise RuntimeError(f"LLM failed after {max_attempts} attempts: {last_err}")
 
 
 def slugify(s): return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
@@ -262,7 +281,8 @@ Rules:
 {target_line}
 - DO NOT add any external authority link or any other external hyperlink.
 - Keyword density about 1% (not stuffing).
-- Paragraphs under 100 words; mostly short sentences.
+- IMPORTANT: Each paragraph MUST be 60-120 words (never less than 60, never more than 150).
+- IMPORTANT: The keyword "{keyword}" must appear in at least 3 different paragraphs spread across the article.
 - Use at least 3 transition words in {language}.
 - Keep passive voice to a minimum.
 - SEO title 40-60 chars starting with the keyword, in {language}.
@@ -287,12 +307,13 @@ def optimize(art: dict, keyword, url, min_words=400, max_words=900):
     res = yoast_evaluate(art["title"], art["meta_description"], art["content_html"],
                          keyword, url, min_words=min_words, max_words=max_words)
     for _ in range(MAX_ROUNDS):
-        if res["passed"]:
+        if res["passed"] or res["score"] >= 75:
             break
         desc = f"""Fix ONLY these Yoast SEO problems in the article, keeping it natural and unique:
 {chr(10).join(res['issues'])}
 Focus keyword: "{keyword}". {('Target URL must stay linked once: ' + url) if url else 'No target URL required.'}
 Word count must stay between {min_words} and {max_words}.
+Each paragraph MUST be 60-150 words. Keyword must appear in at least 3 paragraphs.
 Current article JSON: {json.dumps(art)}
 Return ONLY the corrected JSON with keys title, meta_description, content_html, image_alt."""
         try:
@@ -311,8 +332,7 @@ def _status(db, a: Article, s: str):
 
 # --------------------------------------------------- CUSTOM / SPINNING
 def process_custom_article(aid: int):
-    """User-provided (custom or spinning) article: NO SEO, direct to draft,
-    and skip AI image if user-provided."""
+    """User-provided article: NO SEO, no AI image, direct to draft."""
     lock = _get_lock(aid)
     if not lock.acquire(blocking=False):
         return
@@ -325,7 +345,6 @@ def process_custom_article(aid: int):
         a.error, a.warnings = None, None
         _status(db, a, "Generating")
 
-        # User content is stored in a.content. is_spinning flag decides resolve.
         raw_html = a.content or ""
         if getattr(a, "is_spinning", 0) == 1:
             raw_html = resolve_spinning(raw_html)
@@ -339,7 +358,6 @@ def process_custom_article(aid: int):
         a.warnings = "User-provided article (SEO skipped)"
         db.commit()
 
-        # Create draft (NO AI image for custom)
         try:
             d = create_draft(site, a.title, a.content, a.meta_description or "",
                              a.keyword, slugify(a.keyword), a.image_alt,
@@ -374,7 +392,6 @@ def process_article(aid: int):
         if not a or a.status not in ("Pending", "Failed"):
             return
 
-        # CUSTOM / SPINNING article → separate path
         if getattr(a, "is_custom", 0) == 1:
             db.close()
             lock.release()
@@ -412,8 +429,9 @@ def process_article(aid: int):
         if res["critical_failures"]:
             raise RuntimeError("Critical SEO checks failed: "
                                + "; ".join(res["critical_failures"]))
-        if res["score"] < 60:
-            raise RuntimeError("SEO score stayed below 60: "
+        # Relax threshold: don't fail article on SEO
+        if res["score"] < 50:
+            raise RuntimeError("SEO score stayed below 50: "
                                + "; ".join(res["issues"][:3]))
 
         clean_html = sanitize_html(art["content_html"])
@@ -461,6 +479,7 @@ def process_article(aid: int):
 
 
 def run_campaign(cid: int):
+    """Run with 8-second delay between articles to avoid rate limits."""
     db = SessionLocal()
     try:
         ids = [i for (i,) in db.query(Article.id).filter(
@@ -469,11 +488,13 @@ def run_campaign(cid: int):
         ).order_by(Article.id).all()]
     finally:
         db.close()
-    for i in ids:
+    for idx, i in enumerate(ids):
         db = SessionLocal()
         camp = db.get(Campaign, cid)
         paused = camp and camp.status == "Paused"
         db.close()
         if paused:
             break
+        if idx > 0:
+            time.sleep(8)  # rate limit protection
         process_article(i)
