@@ -415,15 +415,33 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#modal').
 refresh().catch(e => toast(e.message, 'err'));
 setInterval(() => { if (document.hidden || !$('#modal').hidden) return; refresh().catch(() => {}); }, 3000);
 
-// ---------- LOGIN (LOCKED TO SINGLE USER) ----------
+// ---------- LOGIN (STRICTLY LOCKED) ----------
+const LOGIN_EMAIL = "flashseo9@gmail.com";
+const LOGIN_PASSWORD = "Flashseo9";
+
 const hideLogin = () => document.getElementById('loginScreen').classList.add('hidden');
+
 document.getElementById('loginForm').addEventListener('submit', async e => {
   e.preventDefault();
   const f = e.target;
-  const email = f.elements.email.value.trim();
-  const password = f.elements.password.value;
+  const email = (f.elements.email.value || "").trim().toLowerCase();
+  const password = f.elements.password.value || "";
+
+  // Strict local check first
+  if (email !== LOGIN_EMAIL || password !== LOGIN_PASSWORD) {
+    toast('Access denied. Only the authorized account can use this agent.', 'err');
+    return;
+  }
+
   try {
     const r = await api('/login', {method: 'POST', body: {email, password}});
-    if (r.ok) { hideLogin(); toast('Welcome back!', 'ok'); }
-  } catch (err) { toast(err.message, 'err'); }
+    if (r && r.ok) {
+      hideLogin();
+      toast('Welcome back!', 'ok');
+    } else {
+      toast('Login failed. Check credentials.', 'err');
+    }
+  } catch (err) {
+    toast('Access denied. ' + (err.message || ''), 'err');
+  }
 });
