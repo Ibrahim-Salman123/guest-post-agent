@@ -19,12 +19,6 @@
 
     <form class="login-form" id="loginForm">
       <div class="login-field">
-        <label>Full Name</label>
-        <input type="text" name="name" placeholder="John Doe" required>
-        <span class="icon">👤</span>
-      </div>
-
-      <div class="login-field">
         <label>Email Address</label>
         <input type="email" name="email" placeholder="you@company.com" required>
         <span class="icon">✉</span>
@@ -36,29 +30,10 @@
         <span class="icon">🔒</span>
       </div>
 
-      <div class="login-row">
-        <label><input type="checkbox"> Remember me</label>
-        <a href="#">Forgot password?</a>
-      </div>
-
       <button type="submit" class="btn-signin">
         <span>Sign In →</span>
       </button>
-
-      <div class="login-divider">OR</div>
-
-      <button type="button" class="btn-google" id="googleSignIn">
-        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-          <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-          <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-          <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-        </svg>
-        <span>Continue with Google</span>
-      </button>
     </form>
-
-    <p class="login-foot">Don't have an account? <a href="#">Create one</a></p>
   </div>
 
   <p class="login-copyright">© 2026 GuestPost Agent · AI-Powered Content Engine</p>
@@ -86,6 +61,7 @@
     <button data-view="dashboard" data-icon="▦" class="on">Dashboard overview</button>
     <button data-view="websites" data-icon="＋">Add websites</button>
     <button data-view="campaign" data-icon="◈">Create campaign</button>
+    <button data-view="custom" data-icon="✎">Add custom article</button>
     <button data-view="review" data-icon="☰">Draft review queue <b id="qCount">0</b></button>
     <button data-view="analytics" data-icon="∿">Campaign analytics</button>
   </nav>
@@ -100,7 +76,11 @@
   <div class="card"><p>Drafts pending approval</p><h2 id="m_pending">0</h2></div>
   <div class="card"><p>Published articles</p><h2 id="m_pub">0</h2></div></div>
  <div class="panel"><div class="bar"><h3>Live campaign progress</h3>
-  <select id="campSel"></select><button id="runBtn" class="btn">Run campaign</button><button id="pauseBtn" class="btn ghost">Pause</button></div>
+  <select id="campSel"></select>
+  <button id="runBtn" class="btn">Run campaign</button>
+  <button id="pauseBtn" class="btn ghost">Pause</button>
+  <button id="approveAllBtn" class="btn">Approve All &amp; Publish</button>
+ </div>
   <div class="scroll"><table><thead><tr><th>#</th><th>Website</th><th>Keyword</th><th>Target URL</th><th>Status</th><th>SEO</th><th>Draft</th><th>Live</th><th>Date</th><th></th></tr></thead><tbody id="progBody"></tbody></table></div></div>
 </section>
 
@@ -112,7 +92,7 @@
   <label>Username<input name="username" required></label>
   <label>Application password<input name="password" type="password" placeholder="Leave blank to keep current"></label>
   <label>Niche<input name="niche"></label>
-  <label>Article limit (total)<input name="article_limit" type="number" min="1" value="1" required></label>
+  <label>Article limit (total)<input name="article_limit" type="number" min="1" value="10" required></label>
   <label>Daily limit (0 = no limit)<input name="daily_limit" type="number" min="0" value="0"></label>
   <label>Min words<input name="min_words" type="number" min="200" value="900"></label>
   <label>Max words<input name="max_words" type="number" min="200" value="1200"></label>
@@ -120,16 +100,15 @@
   <label>Posting requirements<input name="requirements" placeholder="e.g. 1000 words, formal tone"></label>
   <label class="full">Notes<input name="notes"></label>
   <label class="full">Browser selectors (JSON, custom CMS only)<textarea name="selectors" rows="3" placeholder='{"login_url":"","user_sel":"","pass_sel":"","submit_sel":"","new_post_url":"","title_sel":"","body_sel":"","save_draft_sel":""}'></textarea></label>
-  <label class="full">Internal links (JSON list, optional)<textarea name="internal_links" rows="2" placeholder='[{"url":"https://site.com/blog","anchor":"our blog"},{"url":"https://site.com/about","anchor":"about us"}]'></textarea></label>
+  <label class="full">Internal links (JSON list, optional)<textarea name="internal_links" rows="2" placeholder='[{"url":"https://site.com/blog","anchor":"our blog"}]'></textarea></label>
   <div class="full"><button class="btn">Save website</button>
    <button type="button" id="wfTest" class="btn ghost">Test connection</button>
    <button type="button" id="wfReset" class="btn ghost">Clear</button></div></form>
 
-  <!-- NAYA: Bulk Add -->
   <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">
    <h3 style="margin:0 0 10px">Bulk add websites (CSV)</h3>
-   <p class="hint">Format: <b>name,url,username,password,niche</b> — one per line (max 200)</p>
-   <textarea id="bulkSites" rows="6" placeholder="Site A,https://sitea.com,admin,xxxx xxxx xxxx xxxx,tech
+   <p class="hint">Format: <b>name,url,username,password,niche</b> — one per line (max 500)</p>
+   <textarea id="bulkSites" rows="8" placeholder="Site A,https://sitea.com,admin,xxxx xxxx xxxx xxxx,tech
 Site B,https://siteb.com,admin,yyyy yyyy yyyy yyyy,health"></textarea>
    <div style="margin-top:8px">
     <button type="button" id="bulkAdd" class="btn ghost">Bulk Add Websites</button>
@@ -143,7 +122,6 @@ Site B,https://siteb.com,admin,yyyy yyyy yyyy yyyy,health"></textarea>
  <div class="panel"><h3>Create a campaign</h3>
  <label>Campaign name<input id="cName" placeholder="Digital Marketing Guest Posting"></label>
 
- <!-- NAYA: Language + Image category -->
  <div class="grid" style="margin-top:10px">
   <label>Article Language
    <select id="cLang">
@@ -176,20 +154,22 @@ Site B,https://siteb.com,admin,yyyy yyyy yyyy yyyy,health"></textarea>
     <option value="entertainment">Entertainment</option>
    </select>
   </label>
+  <label>Quantity (articles per keyword)
+   <input id="cQty" type="number" min="1" max="500" value="1">
+  </label>
  </div>
 
  <p class="hint">Websites for auto-assignment (none selected = all):</p><div id="sitePool" class="pool"></div>
- <p class="hint">Keywords and target URLs. URL is optional. Pick a website per row, or leave on Auto.</p>
+ <p class="hint">Keywords and target URLs. URL is optional. Quantity applies per keyword.</p>
  <div id="pairs"></div>
  <button id="addPair" class="btn ghost">Add keyword row</button>
 
- <!-- NAYA: Bulk keywords -->
  <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">
   <h3 style="margin:0 0 10px">Bulk add keywords (CSV)</h3>
-  <p class="hint">Format: <b>keyword,target_url</b> — target URL optional, one per line</p>
-  <textarea id="bulkPairs" rows="6" placeholder="taylor swift wedding,https://site.com/taylor
-crypto casino,
-health tips,https://site.com/health"></textarea>
+  <p class="hint">Format: <b>keyword,target_url,quantity</b> — URL and quantity optional, one per line</p>
+  <textarea id="bulkPairs" rows="6" placeholder="taylor swift wedding,https://site.com/taylor,5
+crypto casino,,3
+health tips,https://site.com/health,10"></textarea>
   <div style="margin-top:8px">
    <button type="button" id="bulkAddPairs" class="btn ghost">Bulk Add Keywords</button>
   </div>
@@ -198,6 +178,46 @@ health tips,https://site.com/health"></textarea>
  <div style="margin-top:16px">
   <button id="saveCamp" class="btn">Create campaign</button>
  </div>
+ </div>
+</section>
+
+<section id="v-custom" class="view" hidden>
+ <div class="panel"><h3>Add custom article</h3>
+  <p class="hint">User-provided article — no SEO, no AI image. Optionally use spinning format: <code>{hello|hi|hey} world</code>.</p>
+  <div class="grid">
+   <label class="full">Website
+    <select id="caSite"></select>
+   </label>
+   <label>Keyword / Title tag
+    <input id="caKeyword" placeholder="taylor swift wedding">
+   </label>
+   <label>Target URL (optional)
+    <input id="caUrl" type="text" placeholder="https://site.com/page">
+   </label>
+   <label>Language
+    <select id="caLang">
+     <option value="English">English</option>
+     <option value="Urdu">Urdu</option>
+     <option value="Hindi">Hindi</option>
+     <option value="Arabic">Arabic</option>
+     <option value="Spanish">Spanish</option>
+     <option value="French">French</option>
+     <option value="German">German</option>
+    </select>
+   </label>
+   <label class="full">Article title
+    <input id="caTitle" placeholder="Taylor Swift Wedding: Everything We Know">
+   </label>
+   <label class="full">Article body (HTML allowed)
+    <textarea id="caBody" rows="10" placeholder="<p>Your article HTML here...</p>"></textarea>
+   </label>
+   <label class="full" style="display:flex;align-items:center;gap:8px">
+    <input type="checkbox" id="caSpin" style="width:auto;margin:0"> Use spinning format <code>{a|b|c}</code>
+   </label>
+  </div>
+  <div style="margin-top:14px">
+   <button id="caSave" class="btn">Add &amp; Publish Article</button>
+  </div>
  </div>
 </section>
 
