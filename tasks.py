@@ -1,5 +1,5 @@
 """CrewAI tasks, Yoast-style evaluator, optimization loop and the article pipeline."""
-import json, os, re, time, threading
+import json, os, re, time, threading, random
 from urllib.parse import urlparse
 from agents import get_client, get_model_name, writer_agent, seo_agent
 from automation import create_draft, validate_external_links, publish_wp_draft
@@ -18,6 +18,23 @@ TRANSITION_WORDS = {
 }
 
 ALLOWED_TAGS = {"p", "h2", "h3", "ul", "ol", "li", "a", "strong", "em", "br", "img"}
+
+
+# --------------------------------------------------------- SPINNING RESOLVER
+_SPIN_RE = re.compile(r"\{([^{}]+)\}")
+
+def resolve_spinning(text: str) -> str:
+    """Replace {a|b|c} with a random option. Supports nested via repeated passes."""
+    if not text:
+        return text
+    for _ in range(6):  # max nesting depth
+        if "{" not in text or "}" not in text:
+            break
+        def repl(m):
+            opts = m.group(1).split("|")
+            return random.choice(opts).strip()
+        text = _SPIN_RE.sub(repl, text)
+    return text
 
 
 def sanitize_html(html: str) -> str:
@@ -292,6 +309,61 @@ def _status(db, a: Article, s: str):
     db.commit()
 
 
+# --------------------------------------------------- CUSTOM / SPINNING
+def process_custom_article(aid: int):
+    """User-provided (custom or spinning) article: NO SEO, direct to draft,
+    and skip AI image if user-provided."""
+    lock = _get_lock(aid)
+    if not lock.acquire(blocking=False):
+        return
+    db = SessionLocal()
+    try:
+        a = db.get(Article, aid)
+        if not a or a.status not in ("Pending", "Failed"):
+            return
+        site = db.get(Website, a.website_id)
+        a.error, a.warnings = None, None
+        _status(db, a, "Generating")
+
+        # User content is stored in a.content. is_spinning flag decides resolve.
+        raw_html = a.content or ""
+        if getattr(a, "is_spinning", 0) == 1:
+            raw_html = resolve_spinning(raw_html)
+
+        clean_html = sanitize_html(raw_html)
+        a.title = a.title or a.keyword
+        a.content = clean_html
+        a.meta_description = a.meta_description or ""
+        a.image_alt = a.image_alt or a.keyword
+        a.seo_score = None
+        a.warnings = "User-provided article (SEO skipped)"
+        db.commit()
+
+        # Create draft (NO AI image for custom)
+        try:
+            d = create_draft(site, a.title, a.content, a.meta_description or "",
+                             a.keyword, slugify(a.keyword), a.image_alt,
+                             image_category="", with_image=False)
+            a.draft_url = d["draft_url"]
+        except Exception as e:
+            a.draft_url = None
+            a.error = f"Draft upload FAILED: {str(e)[:250]}"
+            a.status = "Waiting for Approval"
+            db.commit()
+            return
+
+        _status(db, a, "Draft Created")
+    except Exception as e:
+        db.rollback()
+        a = db.get(Article, aid)
+        if a:
+            a.status, a.error = "Failed", str(e)[:500]
+            db.commit()
+    finally:
+        db.close()
+        lock.release()
+
+
 def process_article(aid: int):
     lock = _get_lock(aid)
     if not lock.acquire(blocking=False):
@@ -301,6 +373,13 @@ def process_article(aid: int):
         a = db.get(Article, aid)
         if not a or a.status not in ("Pending", "Failed"):
             return
+
+        # CUSTOM / SPINNING article → separate path
+        if getattr(a, "is_custom", 0) == 1:
+            db.close()
+            lock.release()
+            return process_custom_article(aid)
+
         site = db.get(Website, a.website_id)
         a.error, a.warnings = None, None
         _status(db, a, "Generating")
@@ -357,7 +436,7 @@ def process_article(aid: int):
         try:
             d = create_draft(site, a.title, a.content, a.meta_description,
                              a.keyword, slugify(a.keyword), a.image_alt,
-                             image_category=image_category)
+                             image_category=image_category, with_image=True)
             a.draft_url = d["draft_url"]
         except Exception as draft_err:
             a.draft_url = None
