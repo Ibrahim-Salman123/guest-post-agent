@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Guest Posting Agent</title><link rel="stylesheet" href="style.css"></head>
+<title>Guest Posting Agent</title><link rel="stylesheet" href="style.css?v=200"></head>
 <body>
 
 <!-- ============ LOGIN SCREEN ============ -->
@@ -175,6 +175,18 @@ health tips,https://site.com/health,10"></textarea>
   </div>
  </div>
 
+ <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">
+  <h3 style="margin:0 0 10px">Upload your own articles (JSON)</h3>
+  <p class="hint">Paste a JSON array. Each item needs <b>keyword, title, content</b>. Optional: target_url, language.</p>
+  <textarea id="bulkCustom" rows="8" placeholder='[
+  {"keyword":"taylor swift wedding","title":"Taylor Swift Wedding Guide","content":"&lt;p&gt;Your HTML here...&lt;/p&gt;","target_url":"https://site.com/taylor"},
+  {"keyword":"crypto casino","title":"Best Crypto Casinos","content":"&lt;p&gt;Another HTML...&lt;/p&gt;"}
+]'></textarea>
+  <div style="margin-top:8px">
+   <button type="button" id="bulkCustomAdd" class="btn ghost">Upload Articles to Campaign</button>
+  </div>
+ </div>
+
  <div style="margin-top:16px">
   <button id="saveCamp" class="btn">Create campaign</button>
  </div>
@@ -246,4 +258,4 @@ health tips,https://site.com/health,10"></textarea>
 </div></div>
 
 <div id="toasts"></div>
-<script src="app.js?v=100"></script>
+<script src="app.js?v=200"></script></body></html>
