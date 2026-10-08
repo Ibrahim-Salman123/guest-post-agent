@@ -15,7 +15,7 @@ import re
 from database import (Article, Campaign, KeywordURLPair, SessionLocal, Website,
                       check_guardrails, daily_used, decrypt, encrypt, init_db,
                       normalize_url, remaining_slots)
-from tasks import process_article, run_campaign
+from tasks import process_article, run_campaign, process_custom_article, slugify
 
 load_dotenv()
 app = FastAPI(title="Guest Posting AI Agent")
@@ -30,6 +30,10 @@ RUNNING_LOCK = threading.Lock()
 
 ARTICLE_LOCKS: Dict[int, threading.Lock] = {}
 ARTICLE_LOCKS_GUARD = threading.Lock()
+
+# LOGIN LOCK
+LOGIN_EMAIL = "Flashseo9@gmail.com"
+LOGIN_PASSWORD = "Flashseo9"
 
 
 def _article_lock(aid: int) -> threading.Lock:
@@ -147,6 +151,7 @@ class PairIn(BaseModel):
     website_id: Optional[int] = None
     language: Optional[str] = ""
     image_category: Optional[str] = ""
+    quantity: int = Field(default=1, ge=1, le=500)   # NAYA
 
     @field_validator("target_url")
     @classmethod
@@ -160,10 +165,27 @@ class CampaignIn(BaseModel):
     website_ids: Optional[List[int]] = None
     language: str = "English"
     image_category: str = ""
+    quantity: int = Field(default=1, ge=1, le=500)   # NAYA (campaign-wide default)
 
 
 class BulkWebsiteIn(BaseModel):
-    websites: List[WebsiteIn] = Field(min_length=1, max_length=200)
+    websites: List[WebsiteIn] = Field(min_length=1, max_length=500)
+
+
+class CustomArticleIn(BaseModel):
+    website_id: int
+    keyword: str = Field(min_length=1, max_length=200)
+    title: str = Field(min_length=1, max_length=300)
+    content: str = Field(min_length=1)             # HTML or spinning format
+    target_url: str = ""
+    language: str = "English"
+    image_category: str = ""
+    is_spinning: bool = False
+
+    @field_validator("target_url")
+    @classmethod
+    def _v_url(cls, v: str) -> str:
+        return _url_optional(v or "")
 
 
 class ApproveIn(BaseModel):
@@ -173,6 +195,11 @@ class ApproveIn(BaseModel):
     @classmethod
     def _v_url(cls, v: str) -> str:
         return _url(v)
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
 
 
 def site_dict(db, s: Website):
@@ -198,6 +225,9 @@ def art_dict(a: Article, full=False):
          "error": a.error, "warnings": a.warnings, "image_alt": a.image_alt,
          "language": getattr(a, "language", "English") or "English",
          "image_category": getattr(a, "image_category", "") or "",
+         "is_custom": getattr(a, "is_custom", 0) or 0,
+         "is_spinning": getattr(a, "is_spinning", 0) or 0,
+         "quantity_slot": getattr(a, "quantity_slot", 1) or 1,
          "created_at": a.created_at.isoformat() if a.created_at else None,
          "published_at": a.published_at.isoformat() if a.published_at else None}
     if full:
@@ -207,6 +237,14 @@ def art_dict(a: Article, full=False):
 
 @app.get("/api/health")
 def health(): return {"ok": True}
+
+
+# ------------------------------------------------ LOGIN (HARDCODED LOCK)
+@app.post("/api/login")
+def login(body: LoginIn):
+    if body.email.strip().lower() == LOGIN_EMAIL.lower() and body.password == LOGIN_PASSWORD:
+        return {"ok": True, "token": "flashseo-locked"}
+    raise HTTPException(401, "Invalid email or password")
 
 
 @app.post("/api/websites")
@@ -256,7 +294,7 @@ def save_website(w: WebsiteIn, db=Depends(get_db)):
 
 @app.post("/api/websites/bulk")
 def bulk_save_websites(body: BulkWebsiteIn, db=Depends(get_db)):
-    """Bulk add up to 200 websites at once."""
+    """Bulk add up to 500 websites at once."""
     created, failed, errors = 0, 0, []
     for w in body.websites:
         try:
@@ -344,6 +382,7 @@ def delete_website(wid: int, force: bool = False, db=Depends(get_db)):
     return {"ok": True, "deleted_articles": article_count}
 
 
+# ----------------------------------------------------- CAMPAIGN CREATE
 @app.post("/api/campaigns")
 def create_campaign(c: CampaignIn, db=Depends(get_db)):
     pool = db.query(Website).filter(Website.id.in_(c.website_ids)).all() if c.website_ids \
@@ -354,41 +393,119 @@ def create_campaign(c: CampaignIn, db=Depends(get_db)):
     db.flush()
     alerts, created = [], 0
     for p in c.pairs:
-        cands = [db.get(Website, p.website_id)] if p.website_id else \
-            sorted(pool, key=lambda s: -remaining_slots(db, s))
-        if not cands or cands[0] is None:
-            alerts.append(f"'{p.keyword}': website not found.")
-            continue
-        err, site = None, None
-        for s in cands:
-            err = check_guardrails(db, s, p.keyword, p.target_url or "", camp.id)
-            if not err:
-                site = s
-                break
-        if not site:
-            alerts.append(f"'{p.keyword}': {err}")
-            continue
-        n = db.query(func.count(Article.id)).filter(
-            Article.campaign_id == camp.id).scalar() + 1
-        art_lang = (p.language or "").strip() or (c.language or "English")
-        art_img = (p.image_category or "").strip() or (c.image_category or "")
-        db.add(KeywordURLPair(campaign_id=camp.id, keyword=p.keyword,
-                              target_url=p.target_url or "",
-                              normalized_url=normalize_url(p.target_url or ""),
-                              assigned_website_id=site.id))
-        db.add(Article(campaign_id=camp.id, website_id=site.id, keyword=p.keyword,
-                       target_url=p.target_url or "",
-                       normalized_url=normalize_url(p.target_url or ""),
-                       article_number=n,
-                       language=art_lang,
-                       image_category=art_img))
-        db.flush()
-        created += 1
+        qty = max(1, int(p.quantity or c.quantity or 1))
+        for slot in range(1, qty + 1):
+            cands = [db.get(Website, p.website_id)] if p.website_id else \
+                sorted(pool, key=lambda s: -remaining_slots(db, s))
+            if not cands or cands[0] is None:
+                alerts.append(f"'{p.keyword}' #{slot}: website not found.")
+                continue
+            err, site = None, None
+            for s in cands:
+                err = check_guardrails(db, s, p.keyword, p.target_url or "", camp.id)
+                if not err:
+                    site = s
+                    break
+            if not site:
+                alerts.append(f"'{p.keyword}' #{slot}: {err}")
+                continue
+            n = db.query(func.count(Article.id)).filter(
+                Article.campaign_id == camp.id).scalar() + 1
+            art_lang = (p.language or "").strip() or (c.language or "English")
+            art_img = (p.image_category or "").strip() or (c.image_category or "")
+            db.add(KeywordURLPair(campaign_id=camp.id, keyword=p.keyword,
+                                  target_url=p.target_url or "",
+                                  normalized_url=normalize_url(p.target_url or ""),
+                                  assigned_website_id=site.id))
+            db.add(Article(campaign_id=camp.id, website_id=site.id, keyword=p.keyword,
+                           target_url=p.target_url or "",
+                           normalized_url=normalize_url(p.target_url or ""),
+                           article_number=n,
+                           language=art_lang,
+                           image_category=art_img,
+                           quantity_slot=slot))
+            db.flush()
+            created += 1
     if not created:
         db.rollback()
         raise HTTPException(400, "No articles created. " + " | ".join(alerts))
     db.commit()
     return {"campaign_id": camp.id, "created": created, "alerts": alerts}
+
+
+# ----------------------------------------------------- CUSTOM ARTICLE
+@app.post("/api/custom-articles")
+def add_custom_article(body: CustomArticleIn, db=Depends(get_db)):
+    """User-added article. If is_spinning, resolve at generation time.
+    NO SEO evaluate. NO AI image."""
+    site = db.get(Website, body.website_id)
+    if not site:
+        raise HTTPException(404, "Website not found")
+
+    camp = db.query(Campaign).order_by(Campaign.id.desc()).first()
+    if not camp:
+        camp = Campaign(name="Custom Articles", language=body.language or "English",
+                        image_category=body.image_category or "")
+        db.add(camp); db.flush()
+
+    n = db.query(func.count(Article.id)).filter(
+        Article.campaign_id == camp.id).scalar() + 1
+
+    art = Article(
+        campaign_id=camp.id, website_id=site.id, keyword=body.keyword,
+        target_url=body.target_url or "",
+        normalized_url=normalize_url(body.target_url or ""),
+        article_number=n,
+        language=body.language or "English",
+        image_category=body.image_category or "",
+        title=body.title, content=body.content,
+        meta_description="", image_alt=body.keyword,
+        is_custom=1, is_spinning=1 if body.is_spinning else 0,
+        status="Pending",
+    )
+    db.add(art); db.commit(); db.refresh(art)
+
+    # Kick off processing right away
+    threading.Thread(target=process_custom_article, args=(art.id,), daemon=True).start()
+    return {"ok": True, "article_id": art.id, "campaign_id": camp.id}
+
+
+# ----------------------------------------------------- BULK APPROVE
+@app.post("/api/campaigns/{cid}/approve-all")
+def approve_all(cid: int, db=Depends(get_db)):
+    """Approve + publish ALL drafts in a campaign at once."""
+    c = db.get(Campaign, cid)
+    if not c:
+        raise HTTPException(404, "Campaign not found")
+    arts = db.query(Article).filter(
+        Article.campaign_id == cid,
+        Article.status.in_(["Draft Created", "Waiting for Approval"])
+    ).all()
+    if not arts:
+        raise HTTPException(400, "No drafts to approve in this campaign")
+
+    from automation import publish_wp_draft
+    published, failed, errors = 0, 0, []
+    for a in arts:
+        site = db.get(Website, a.website_id)
+        try:
+            pub = publish_wp_draft(site, a)
+            a.live_url = pub.get("live_url")
+            a.status = "Published"
+            a.published_at = datetime.now()
+            site.published_count += 1
+            published += 1
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            a.error = f"Publish failed: {str(e)[:300]}"
+            db.commit()
+            errors.append(f"#{a.id} {a.title or a.keyword}: {str(e)[:80]}")
+            failed += 1
+    if all(x.status == "Published" for x in c.articles):
+        c.status = "Completed"
+        db.commit()
+    return {"ok": True, "published": published, "failed": failed, "errors": errors}
 
 
 @app.get("/api/campaigns")
@@ -475,7 +592,7 @@ def list_articles(campaign_id: Optional[int] = None,
     q = db.query(Article)
     if campaign_id: q = q.filter(Article.campaign_id == campaign_id)
     if status: q = q.filter(Article.status == status)
-    return [art_dict(a) for a in q.order_by(Article.id.desc()).limit(500)]
+    return [art_dict(a) for a in q.order_by(Article.id.desc()).limit(2000)]
 
 
 @app.get("/api/articles/{aid}")
