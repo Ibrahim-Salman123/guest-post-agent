@@ -172,10 +172,16 @@ def _wp_upload_image(site: Website, image_url: str, alt: str, name: str):
 
 
 def _wp_create_post(site: Website, title, html, meta, keyword, slug,
-                    image_alt, status: str, image_category: str = "") -> dict:
-    img = _fetch_related_image(keyword or title, category=image_category)
-    media_id, img_src = _wp_upload_image(site, img, image_alt or keyword or title, slug or keyword)
-    body_html = _inject_image(html, img_src, image_alt or keyword or title)
+                    image_alt, status: str, image_category: str = "",
+                    with_image: bool = True) -> dict:
+    img_src = ""
+    media_id = None
+    if with_image:
+        img = _fetch_related_image(keyword or title, category=image_category)
+        media_id, img_src = _wp_upload_image(site, img, image_alt or keyword or title, slug or keyword)
+        body_html = _inject_image(html, img_src, image_alt or keyword or title)
+    else:
+        body_html = html
     payload = {"title": title, "content": body_html, "status": status,
                "slug": slug or "", "excerpt": meta or ""}
     if media_id:
@@ -195,29 +201,35 @@ def _wp_post_id(draft_url: str):
 
 # ------------------------------------------------------------------ draft
 def create_draft(site: Website, title, html, meta, keyword, slug,
-                 image_alt="", image_category="") -> dict:
+                 image_alt="", image_category="", with_image=True) -> dict:
     s = _selectors(site)
     if _use_browser(s):
         return _browser_run(site, s, title, html, keyword, image_alt,
-                            publish=False, image_category=image_category)
+                            publish=False, image_category=image_category,
+                            with_image=with_image)
     if _is_wordpress(site):
         p = _wp_create_post(site, title, html, meta, keyword, slug, image_alt,
-                            "draft", image_category=image_category)
+                            "draft", image_category=image_category,
+                            with_image=with_image)
         return {"draft_url": f"{_base(site)}/wp-admin/post.php?post={p['id']}&action=edit",
                 "live_url": None, "method": "wp-api", "image_url": p["image_url"]}
     raise RuntimeError(_no_method_msg())
 
 
 def _browser_run(site, s, title, html, keyword, image_alt,
-                 publish=False, image_category="") -> dict:
+                 publish=False, image_category="", with_image=True) -> dict:
     required = ["login_url", "user_sel", "pass_sel", "submit_sel",
                 "new_post_url", "title_sel", "body_sel", "save_draft_sel"]
     missing = [k for k in required if not s.get(k)]
     if missing:
         raise RuntimeError(f"Selectors missing: {', '.join(missing)}")
 
-    image_url = _fetch_related_image(keyword or title, category=image_category)
-    html_with_img = _inject_image(html, image_url, image_alt or keyword or title)
+    image_url = ""
+    if with_image:
+        image_url = _fetch_related_image(keyword or title, category=image_category)
+        html_with_img = _inject_image(html, image_url, image_alt or keyword or title)
+    else:
+        html_with_img = html
 
     sync_playwright = _sync_playwright()
     with sync_playwright() as p:
@@ -291,7 +303,8 @@ def publish_wp_draft(site: Website, article) -> dict:
                             article.meta_description, article.keyword,
                             re.sub(r"[^a-z0-9]+", "-", (article.keyword or "").lower()).strip("-"),
                             article.image_alt or article.keyword, "publish",
-                            image_category=getattr(article, 'image_category', '') or '')
+                            image_category=getattr(article, 'image_category', '') or '',
+                            with_image=(getattr(article, 'is_custom', 0) == 0))
         return {"live_url": p["link"], "method": "wp-api"}
 
     raise RuntimeError(_no_method_msg())
@@ -302,7 +315,8 @@ def _publish_browser(site, s, article) -> dict:
         d = _browser_run(site, s, article.title or article.keyword, article.content or "",
                          article.keyword, article.image_alt or article.keyword,
                          publish=True,
-                         image_category=getattr(article, 'image_category', '') or '')
+                         image_category=getattr(article, 'image_category', '') or '',
+                         with_image=(getattr(article, 'is_custom', 0) == 0))
         return {"live_url": d["live_url"], "method": "playwright"}
 
     publish_sel = s.get("publish_sel")
