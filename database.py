@@ -22,7 +22,6 @@ STATUSES = ["Pending", "Generating", "Optimizing", "Draft Created",
 
 
 def normalize_url(u: str) -> str:
-    """Lowercase scheme/host, strip trailing slash, drop fragment."""
     if not u:
         return u or ""
     p = urlparse(u.strip())
@@ -122,6 +121,10 @@ class Article(Base):
     live_url = Column(String(600))
     status = Column(String(30), default="Pending")
     error = Column(Text)
+    # NAYA: custom / spinning ke liye
+    is_custom = Column(Integer, default=0)       # 0 = AI, 1 = user-provided
+    is_spinning = Column(Integer, default=0)     # 0 = normal, 1 = spinning format
+    quantity_slot = Column(Integer, default=1)   # kis number ka article hai (1..N)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     published_at = Column(DateTime)
@@ -130,7 +133,6 @@ class Article(Base):
 
 
 def _auto_migrate():
-    """SQLite lightweight migration: add missing columns without Alembic."""
     insp = inspect(engine)
     tables = set(insp.get_table_names())
     migrations = [
@@ -157,6 +159,10 @@ def _auto_migrate():
         ("articles", "published_at", "DATETIME"),
         ("articles", "language", "VARCHAR(30) DEFAULT 'English'"),
         ("articles", "image_category", "VARCHAR(100) DEFAULT ''"),
+        # NAYE COLUMNS
+        ("articles", "is_custom", "INTEGER DEFAULT 0"),
+        ("articles", "is_spinning", "INTEGER DEFAULT 0"),
+        ("articles", "quantity_slot", "INTEGER DEFAULT 1"),
         # keyword_url_pairs
         ("keyword_url_pairs", "normalized_url", "VARCHAR(500)"),
     ]
