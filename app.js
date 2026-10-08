@@ -34,16 +34,15 @@ function statusCell(a) {
   const warnHtml = (!a.error && a.warnings)
     ? `<br><small class="warn-msg" title="${esc(a.warnings)}">⚠ ${esc(a.warnings.split('\n')[0].slice(0, 60))}</small>`
     : '';
-  return `<td>${badge(a.status)}${errHtml}${warnHtml}</td>`;
+  const tag = a.is_custom ? ' <small style="color:#0EA5E9">[custom]</small>' : '';
+  return `<td>${badge(a.status)}${tag}${errHtml}${warnHtml}</td>`;
 }
 
-// Sidebar navigation
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
   document.querySelectorAll('.view').forEach(v => v.hidden = v.id !== 'v-' + b.dataset.view);
 });
 
-// Sidebar toggle
 const toggleSidebar = () => {
   document.querySelector('.side').classList.toggle('collapsed');
   document.body.classList.toggle('sidebar-collapsed');
@@ -68,6 +67,7 @@ function renderAll() {
   const camp = S.camps.find(c => String(c.id) === String(S.camp));
   $('#runBtn').disabled = !camp || camp.running; $('#runBtn').textContent = camp && camp.running ? 'Running…' : 'Run campaign';
   $('#pauseBtn').textContent = camp && camp.status === 'Paused' ? 'Resume' : 'Pause'; $('#pauseBtn').disabled = !camp;
+  $('#approveAllBtn').disabled = !camp;
 
   const rows = S.arts.filter(a => String(a.campaign_id) === String(S.camp)).sort((a, b) => a.article_number - b.article_number);
   $('#progBody').innerHTML = rows.map(a => `<tr><td>${a.article_number}</td><td>${esc(a.website)}</td><td>${esc(a.keyword)}</td>
@@ -94,17 +94,33 @@ function renderAll() {
   if (pool.dataset.hash !== hash) { pool.dataset.hash = hash;
     pool.innerHTML = S.sites.map(s => `<label><input type="checkbox" value="${s.id}">${esc(s.name)} (${s.remaining} left)</label>`).join('') || '<span class="hint">Add websites first.</span>'; }
 
-  // Only update the website auto-assign dropdown; leave lang/image dropdowns alone
   document.querySelectorAll('#pairs select.pw').forEach(sel => {
     const v = sel.value;
     sel.innerHTML = '<option value="">Auto-assign</option>' + S.sites.map(s => `<option value="${s.id}">${esc(s.name)} (${s.remaining} left)</option>`).join('');
     sel.value = v;
   });
+
+  // Custom article website dropdown
+  const caSite = $('#caSite');
+  if (caSite) {
+    const cur = caSite.value;
+    caSite.innerHTML = '<option value="">— pick a website —</option>' + S.sites.map(s => `<option value="${s.id}">${esc(s.name)} (${s.remaining} left)</option>`).join('');
+    if (cur) caSite.value = cur;
+  }
 }
 
 $('#campSel').onchange = e => { S.camp = e.target.value; renderAll(); };
 $('#runBtn').onclick = guard(async () => { const r = await api(`/campaigns/${S.camp}/execute`, {method: 'POST'}); toast(`Started ${r.started} article(s)`, 'ok'); await refresh(); });
 $('#pauseBtn').onclick = guard(async () => { await api(`/campaigns/${S.camp}/toggle`, {method: 'POST'}); await refresh(); });
+$('#approveAllBtn').onclick = guard(async () => {
+  if (!S.camp) return;
+  if (!confirm('Approve & publish ALL drafts in this campaign?')) return;
+  toast('Publishing all drafts... please wait', 'ok');
+  const r = await api(`/campaigns/${S.camp}/approve-all`, {method: 'POST'});
+  toast(`Published ${r.published}, failed ${r.failed}`, r.failed ? 'err' : 'ok');
+  if (r.errors && r.errors.length) console.warn(r.errors);
+  refresh();
+});
 
 document.body.addEventListener('click', guard(async e => {
   const t = e.target;
@@ -138,14 +154,12 @@ document.body.addEventListener('click', guard(async e => {
       refresh();
     } catch (err) {
       if (err.message && err.message.toLowerCase().includes('article')) {
-        if (confirm(`"${siteName}" has articles linked to it.\n\nDeleting will also remove:\n• All articles under this website\n• All campaign references\n\nAre you sure you want to delete?`)) {
+        if (confirm(`"${siteName}" has articles linked to it.\n\nAre you sure you want to delete?`)) {
           await api('/websites/' + wid + '?force=true', {method: 'DELETE'});
           toast('Website and articles deleted', 'ok');
           refresh();
         }
-      } else {
-        throw err;
-      }
+      } else { throw err; }
     }
   }
 }));
@@ -173,9 +187,7 @@ $('#siteForm').onsubmit = guard(async e => {
   await api('/websites', {method: 'POST', body: o}); toast('Website saved', 'ok'); resetSite(); refresh();
 });
 
-// ============================================================
-// BULK ADD WEBSITES
-// ============================================================
+// BULK WEBSITES
 $('#bulkAdd').onclick = guard(async () => {
   const txt = $('#bulkSites').value.trim();
   if (!txt) throw new Error('Paste CSV data first');
@@ -185,16 +197,9 @@ $('#bulkAdd').onclick = guard(async () => {
     const parts = line.split(',').map(p => p.trim());
     if (parts.length < 4) continue;
     websites.push({
-      name: parts[0],
-      url: parts[1],
-      username: parts[2],
-      password: parts[3],
-      niche: parts[4] || '',
-      article_limit: 10,
-      daily_limit: 1,
-      min_words: 900,
-      max_words: 1200,
-      cms_type: 'wordpress',
+      name: parts[0], url: parts[1], username: parts[2], password: parts[3],
+      niche: parts[4] || '', article_limit: 10, daily_limit: 1,
+      min_words: 900, max_words: 1200, cms_type: 'wordpress',
     });
   }
   if (!websites.length) throw new Error('No valid rows found');
@@ -205,21 +210,19 @@ $('#bulkAdd').onclick = guard(async () => {
   refresh();
 });
 
-// ============================================================
-// BULK ADD KEYWORDS
-// ============================================================
+// BULK KEYWORDS
 $('#bulkAddPairs').onclick = () => {
   const txt = $('#bulkPairs').value.trim();
   if (!txt) { toast('Paste CSV first', 'err'); return; }
   const lines = txt.split('\n').map(l => l.trim()).filter(Boolean);
   let count = 0;
   for (const line of lines) {
-    const idx = line.indexOf(',');
-    let kw, url;
-    if (idx === -1) { kw = line.trim(); url = ''; }
-    else { kw = line.slice(0, idx).trim(); url = line.slice(idx + 1).trim(); }
+    const parts = line.split(',').map(p => p.trim());
+    const kw = parts[0] || '';
+    const url = parts[1] || '';
+    const qty = parseInt(parts[2]) || 1;
     if (!kw) continue;
-    addPairWithValues(kw, url);
+    addPairWithValues(kw, url, qty);
     count++;
   }
   toast(`Added ${count} keyword rows`, 'ok');
@@ -227,12 +230,10 @@ $('#bulkAddPairs').onclick = () => {
   renderAll();
 };
 
-// ============================================================
-// KEYWORD ROW BUILDERS
-// ============================================================
-function _pairRowInner(keyword = '', url = '') {
+function _pairRowInner(keyword = '', url = '', qty = 1) {
   return `<input placeholder="Keyword" class="pk" value="${esc(keyword)}">
     <input placeholder="Target URL (optional)" class="pu" type="text" value="${esc(url)}">
+    <input class="pq" type="number" min="1" max="500" value="${qty}" title="Quantity">
     <select class="pw"></select>
     <select class="plang">
       <option value="">Language (default)</option>
@@ -262,29 +263,25 @@ function addPair() {
   const d = document.createElement('div'); d.className = 'prow';
   d.innerHTML = _pairRowInner();
   d.querySelector('button').onclick = () => d.remove();
-  $('#pairs').appendChild(d);
-  renderAll();
+  $('#pairs').appendChild(d); renderAll();
 }
-
-function addPairWithValues(keyword, url) {
+function addPairWithValues(keyword, url, qty = 1) {
   const d = document.createElement('div'); d.className = 'prow';
-  d.innerHTML = _pairRowInner(keyword, url);
+  d.innerHTML = _pairRowInner(keyword, url, qty);
   d.querySelector('button').onclick = () => d.remove();
   $('#pairs').appendChild(d);
 }
+$('#addPair').onclick = addPair; addPair();
 
-$('#addPair').onclick = addPair;
-addPair();
-
-// ============================================================
 // SAVE CAMPAIGN
-// ============================================================
 $('#saveCamp').onclick = guard(async () => {
   const campLang = ($('#cLang') && $('#cLang').value) || 'English';
   const campImg = ($('#cImgCat') && $('#cImgCat').value) || '';
+  const campQty = parseInt($('#cQty') && $('#cQty').value) || 1;
   const pairs = [...document.querySelectorAll('.prow')].map(r => ({
     keyword: r.querySelector('.pk').value.trim(),
     target_url: r.querySelector('.pu').value.trim(),
+    quantity: parseInt(r.querySelector('.pq').value) || 1,
     website_id: r.querySelector('.pw').value ? +r.querySelector('.pw').value : null,
     language: r.querySelector('.plang') ? r.querySelector('.plang').value : '',
     image_category: r.querySelector('.pimg') ? r.querySelector('.pimg').value : '',
@@ -297,6 +294,7 @@ $('#saveCamp').onclick = guard(async () => {
     website_ids: ids.length ? ids : null,
     language: campLang,
     image_category: campImg,
+    quantity: campQty,
   }});
   r.alerts.forEach(a => toast('Skipped: ' + a, 'err'));
   toast(`Campaign created with ${r.created} article(s)`, 'ok');
@@ -305,11 +303,31 @@ $('#saveCamp').onclick = guard(async () => {
   await refresh(); document.querySelector('[data-view=dashboard]').click();
 });
 
-// ============================================================
-// MODAL
-// ============================================================
-let cur = null;
+// CUSTOM ARTICLE
+$('#caSave').onclick = guard(async () => {
+  const siteId = parseInt($('#caSite').value);
+  const keyword = $('#caKeyword').value.trim();
+  const title = $('#caTitle').value.trim();
+  const body = $('#caBody').value;
+  if (!siteId || !keyword || !title || !body) throw new Error('Website, keyword, title, and body required');
+  const payload = {
+    website_id: siteId,
+    keyword,
+    title,
+    content: body,
+    target_url: $('#caUrl').value.trim(),
+    language: $('#caLang').value,
+    is_spinning: $('#caSpin').checked,
+  };
+  const r = await api('/custom-articles', {method: 'POST', body: payload});
+  toast('Custom article submitted — publishing soon', 'ok');
+  $('#caKeyword').value = ''; $('#caTitle').value = ''; $('#caBody').value = ''; $('#caUrl').value = '';
+  $('#caSpin').checked = false;
+  refresh();
+});
 
+// MODAL
+let cur = null;
 function setIframeContent(html) {
   const old = document.getElementById('mPrev');
   if (!old) return;
@@ -320,75 +338,59 @@ function setIframeContent(html) {
   fresh.srcdoc = html;
   old.parentNode.replaceChild(fresh, old);
 }
-
 async function openModal(id) {
   cur = await api('/articles/' + id);
   $('#mTitle').textContent = cur.title || cur.keyword;
   $('#mMeta').textContent = `${cur.website} | Keyword: ${cur.keyword} | Target: ${cur.target_url || '—'} | Language: ${cur.language || 'English'} | Image: ${cur.image_category || 'auto'} | SEO ${cur.seo_score ?? '-'} | Meta: ${cur.meta_description || '-'}`;
   if (cur.image_alt) $('#mMeta').textContent += ` | Image alt: ${cur.image_alt}`;
+  if (cur.is_custom) $('#mMeta').textContent += ' | [CUSTOM]';
+  if (cur.is_spinning) $('#mMeta').textContent += ' [SPINNING]';
 
   const warnEl = $('#mWarn');
   const msgs = [];
   if (cur.error) msgs.push('❌ ' + cur.error);
   if (cur.warnings) msgs.push('⚠ ' + cur.warnings);
   if (msgs.length) {
-    warnEl.hidden = false;
-    warnEl.textContent = msgs.join('\n');
+    warnEl.hidden = false; warnEl.textContent = msgs.join('\n');
     warnEl.className = cur.error ? 'warn warn-err' : 'warn';
-  } else {
-    warnEl.hidden = true;
-    warnEl.textContent = '';
-    warnEl.className = 'warn';
-  }
+  } else { warnEl.hidden = true; warnEl.textContent = ''; warnEl.className = 'warn'; }
 
   const content = cur.content || '<p style="color:#999;font-style:italic">No content available.</p>';
   const preview = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-      body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
-           padding:20px;line-height:1.7;color:#0F172A;max-width:800px;margin:0 auto}
+      body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;padding:20px;line-height:1.7;color:#0F172A;max-width:800px;margin:0 auto}
       h2{color:#0EA5E9;margin-top:28px;margin-bottom:12px;font-size:1.35em}
       h3{color:#0EA5E9;margin-top:20px;margin-bottom:8px;font-size:1.1em}
-      p{margin:12px 0}
-      a{color:#0EA5E9}
-      strong{color:#0F172A}
-      ul,ol{margin:12px 0;padding-left:24px}
-      li{margin:6px 0}
+      p{margin:12px 0} a{color:#0EA5E9} ul,ol{margin:12px 0;padding-left:24px}
       img{max-width:100%;height:auto;border-radius:8px;margin:12px 0}
     </style></head><body>${content}</body></html>`;
   setIframeContent(preview);
 
   if (cur.draft_url) {
-    $('#mDraft').href = cur.draft_url;
-    $('#mDraft').style.display = '';
+    $('#mDraft').href = cur.draft_url; $('#mDraft').style.display = '';
     $('#mDraft').textContent = 'Open draft in website';
-  } else {
-    $('#mDraft').style.display = 'none';
-  }
+  } else { $('#mDraft').style.display = 'none'; }
 
   const status = cur.status;
   const canApprove = ['Draft Created', 'Waiting for Approval'].includes(status);
   const canReject  = ['Draft Created', 'Waiting for Approval', 'Failed', 'Rejected'].includes(status);
   const canDelete  = status !== 'Published';
-
   const liveLabel = $('#mLive').closest('label');
   if (liveLabel) liveLabel.hidden = !canApprove;
   $('#mApprove').hidden = !canApprove;
   $('#mReject').hidden  = !canReject;
   $('#mDelete').hidden  = !canDelete;
   $('#mAct').hidden = status === 'Published';
-
   $('#mLive').value = '';
   $('#modal').hidden = false;
   if (status === 'Published') $('#mMeta').textContent += ` | Live: ${cur.live_url}`;
 }
 
 $('#mClose').onclick = () => $('#modal').hidden = true;
-
 $('#mApprove').onclick = guard(async () => {
   const manualUrl = $('#mLive').value.trim();
   if (!confirm(manualUrl
       ? `Publish this article now? Live URL will be set to: ${manualUrl}`
       : 'Publish this article on your real website now?')) return;
-
   toast('Publishing... please wait', 'ok');
   try {
     const body = manualUrl ? {live_url: manualUrl} : {};
@@ -396,11 +398,8 @@ $('#mApprove').onclick = guard(async () => {
     $('#modal').hidden = true;
     toast(r.live_url ? 'Published successfully! Live URL saved.' : 'Published successfully! Check your website.', 'ok');
     refresh();
-  } catch (e) {
-    toast(e.message, 'err');
-  }
+  } catch (e) { toast(e.message, 'err'); }
 });
-
 $('#mReject').onclick = guard(async () => {
   if (!confirm('Reject this draft and regenerate a fresh version?')) return;
   await api(`/articles/${cur.id}/reject?regenerate=true`, {method: 'POST'});
@@ -416,10 +415,15 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') $('#modal').
 refresh().catch(e => toast(e.message, 'err'));
 setInterval(() => { if (document.hidden || !$('#modal').hidden) return; refresh().catch(() => {}); }, 3000);
 
-// Login screen
+// ---------- LOGIN (LOCKED TO SINGLE USER) ----------
 const hideLogin = () => document.getElementById('loginScreen').classList.add('hidden');
-document.getElementById('loginForm').addEventListener('submit', e => {
+document.getElementById('loginForm').addEventListener('submit', async e => {
   e.preventDefault();
-  hideLogin();
+  const f = e.target;
+  const email = f.elements.email.value.trim();
+  const password = f.elements.password.value;
+  try {
+    const r = await api('/login', {method: 'POST', body: {email, password}});
+    if (r.ok) { hideLogin(); toast('Welcome back!', 'ok'); }
+  } catch (err) { toast(err.message, 'err'); }
 });
-document.getElementById('googleSignIn').addEventListener('click', hideLogin);
