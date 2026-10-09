@@ -32,8 +32,8 @@ ARTICLE_LOCKS: Dict[int, threading.Lock] = {}
 ARTICLE_LOCKS_GUARD = threading.Lock()
 
 # LOGIN LOCK
-LOGIN_EMAIL = "Flashseo9@gmail.com"
-LOGIN_PASSWORD = "Flashseo9"
+LOGIN_EMAIL = "ibrahim444salman@gmail.com"
+LOGIN_PASSWORD = "00Ibr@siddiquE"
 
 
 def _article_lock(aid: int) -> threading.Lock:
