@@ -475,8 +475,8 @@ refresh().catch(() => {});
 setInterval(() => { if (document.hidden || !$('#modal').hidden) return; refresh().catch(() => {}); }, 3000);
 
 // ---------- LOGIN (STRICTLY LOCKED) ----------
-const LOGIN_EMAIL = "flashseo9@gmail.com";
-const LOGIN_PASSWORD = "Flashseo9";
+const LOGIN_EMAIL = "ibrahim444salman@gmail.com";
+const LOGIN_PASSWORD = "00Ibr@siddiquE";
 
 const hideLogin = () => document.getElementById('loginScreen').classList.add('hidden');
 
